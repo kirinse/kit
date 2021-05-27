@@ -33,7 +33,7 @@ func (b *BaseGenerator) InitPg() {
 	b.code = NewPartialGenerator(b.srcFile.Empty())
 }
 func (b *BaseGenerator) getMissingImports(imp []parser.NamedTypeValue, f *parser.File) ([]parser.NamedTypeValue, error) {
-	n := []parser.NamedTypeValue{}
+	var n []parser.NamedTypeValue
 	for _, v := range imp {
 		for i, vo := range f.Imports {
 			if vo.Name == "" {

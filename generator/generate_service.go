@@ -1590,6 +1590,7 @@ func (g *generateCmd) Generate() (err error) {
 	g.generateDefaultMetrics()
 	g.generateCancelInterrupt()
 	g.generateCmdMain()
+	g.generateBanner()
 	if g.generateFirstTime {
 		return g.fs.WriteFile(g.filePath, g.srcFile.GoString(), true)
 	}
@@ -1686,7 +1687,9 @@ func (g *generateCmd) generateRun() (*PartialGenerator, error) {
 			jen.Defer().Id("sentryClient").Dot("Flush").Call(jen.Qual("time", "Second")),
 		),
 	).Line()
-
+	//pg.Raw().Qual("github.com/kirinse/go-utils/tools/banner", "PrintBanner").
+	//	Call(jen.Id("logger"), jen.Lit(true)).
+	//	Line()
 	//pg.Raw().Id("logger").Op("=").Qual("github.com/go-kit/kit/log", "NewLogfmtLogger").Call(
 	//	jen.Qual("os", "Stderr"),
 	//).Line()
@@ -1735,7 +1738,7 @@ func (g *generateCmd) generateRun() (*PartialGenerator, error) {
 	).Line()
 	pg.Raw().Id("initMetricsEndpoint").Call(jen.Id("g")).Line()
 	pg.Raw().Id("initCancelInterrupt").Call(jen.Id("g")).Line()
-	pg.Raw().Id("logger").Dot("Log").Call(
+	pg.Raw().Qual("github.com/go-kit/kit/log/level", "Info").Call(jen.Id("logger")).Dot("Log").Call(
 		jen.Lit("exit"),
 		jen.Id("g").Dot("Run").Call(),
 	).Line()
@@ -1743,7 +1746,7 @@ func (g *generateCmd) generateRun() (*PartialGenerator, error) {
 }
 func (g *generateCmd) generateVars() {
 	if g.generateFirstTime {
-		g.code.Raw().Const().Id("SRV_NAME").Op("=").Lit(utils.ToUpperFirst(g.name)).Line()
+		g.code.Raw().Const().Id("SRV_NAME").Op("=").Lit(strings.ToUpper(g.name)).Line()
 		g.code.Raw().Const().Id("SVC_NAME").Op("=").Lit(utils.ToLowerSnakeCase(g.name)).Line()
 
 		//g.code.Raw().Var().Id("tracer").Qual("github.com/opentracing/opentracing-go", "Tracer").Line()
@@ -1757,9 +1760,7 @@ func (g *generateCmd) generateVars() {
 		g.code.NewLine()
 		g.code.Raw().Var().Id("flagSet").Op("=").Qual("flag", "NewFlagSet").Call(
 			jen.Lit(g.name), jen.Qual("flag", "ExitOnError"),
-		)
-		g.code.NewLine()
-		g.code.NewLine()
+		).Line()
 		g.code.Raw().Var().Id("debugAddr").Op("=").Id("flagSet").Dot("String").Call(
 			jen.Lit("debug-addr"),
 			jen.Lit(":8080"),
@@ -1818,7 +1819,7 @@ func (g *generateCmd) generateInitHTTP() (err error) {
 	).Line()
 	pt.Raw().If(
 		jen.Err().Op("!=").Nil().Block(
-			jen.Id("logger").Dot("Log").Call(
+			jen.Qual("github.com/go-kit/kit/log/level", "Error").Call(jen.Id("logger")).Dot("Log").Call(
 				jen.Lit("transport"),
 				jen.Lit("HTTP"),
 				jen.Lit("during"),
@@ -1826,11 +1827,12 @@ func (g *generateCmd) generateInitHTTP() (err error) {
 				jen.Lit("err"),
 				jen.Err(),
 			),
+			jen.Return(),
 		),
 	).Line()
 	pt.Raw().Id("g").Dot("Add").Call(
 		jen.Func().Params().Error().Block(
-			jen.Id("logger").Dot("Log").Call(
+			jen.Qual("github.com/go-kit/kit/log/level", "Info").Call(jen.Id("logger")).Dot("Log").Call(
 				jen.Lit("transport"),
 				jen.Lit("HTTP"),
 				jen.Lit("addr"),
@@ -1897,7 +1899,7 @@ func (g *generateCmd) generateInitGRPC() (err error) {
 	).Line()
 	pt.Raw().If(
 		jen.Err().Op("!=").Nil().Block(
-			jen.Id("logger").Dot("Log").Call(
+			jen.Qual("github.com/go-kit/kit/log/level", "Error").Call(jen.Id("logger")).Dot("Log").Call(
 				jen.Lit("transport"),
 				jen.Lit("gRPC"),
 				jen.Lit("during"),
@@ -1905,6 +1907,7 @@ func (g *generateCmd) generateInitGRPC() (err error) {
 				jen.Lit("err"),
 				jen.Err(),
 			),
+			jen.Return(),
 		),
 	).Line()
 	pt.Raw().Id("g").Dot("Add").Call(
@@ -2049,7 +2052,7 @@ func (g *generateCmd) generateDefaultMetrics() {
 			),
 			jen.If(
 				jen.Err().Op("!=").Nil().Block(
-					jen.Id("logger").Dot("Log").Call(
+					jen.Qual("github.com/go-kit/kit/log/level", "Error").Call(jen.Id("logger")).Dot("Log").Call(
 						jen.Lit("transport"),
 						jen.Lit("debug/HTTP"),
 						jen.Lit("during"),
@@ -2057,11 +2060,12 @@ func (g *generateCmd) generateDefaultMetrics() {
 						jen.Lit("err"),
 						jen.Err(),
 					),
+					jen.Return(),
 				),
 			),
 			jen.Id("g").Dot("Add").Call(
 				jen.Func().Params().Error().Block(
-					jen.Id("logger").Dot("Log").Call(
+					jen.Qual("github.com/go-kit/kit/log/level", "Info").Call(jen.Id("logger")).Dot("Log").Call(
 						jen.Lit("transport"),
 						jen.Lit("debug/HTTP"),
 						jen.Lit("addr"),
@@ -2144,4 +2148,26 @@ func (g *generateCmd) generateCmdMain() error {
 		jen.Qual(cmdSvcImport, "Run").Call(),
 	)
 	return g.fs.WriteFile(mainFilePath, src.GoString(), false)
+}
+func (g *generateCmd) generateBanner() error {
+	bannerDest := fmt.Sprintf(viper.GetString("gk_cmd_path_format"), utils.ToLowerSnakeCase(g.name))
+	bannerFilePath := path.Join(bannerDest, "banner.go")
+	g.CreateFolderStructure(bannerDest)
+	if b, err := g.fs.Exists(bannerFilePath); err != nil {
+		return err
+	} else if b {
+		return nil
+	}
+	src := jen.NewFile("main")
+	src.Func().Id("init").Params().Block(
+		jen.Id("templ").Op(":=").Lit(`{{ .AnsiColor.BrightBlue }}{{ .Title "E8BET" "chunky" 2 }}{{ .AnsiColor.Default }}
+`),
+		jen.Qual("github.com/dimiro1/banner", "InitString").Call(
+			jen.Qual("github.com/mattn/go-colorable", "NewColorableStdout").Call(),
+			jen.Lit(true),
+			jen.Lit(true),
+			jen.Id("templ"),
+		),
+	)
+	return g.fs.WriteFile(bannerFilePath, src.GoString(), false)
 }
