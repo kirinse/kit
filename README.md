@@ -1,4 +1,4 @@
-# GoKit CLI  [![Build Status](https://travis-ci.org/kujtimiihoxha/kit.svg?branch=master)](https://travis-ci.org/kujtimiihoxha/kit)[![Go Report Card](https://goreportcard.com/badge/github.com/kujtimiihoxha/kit)](https://goreportcard.com/report/github.com/kujtimiihoxha/kit)[![Coverage Status](https://coveralls.io/repos/github/kujtimiihoxha/kit/badge.svg?branch=master)](https://coveralls.io/github/kujtimiihoxha/kit?branch=master)
+# GoKit CLI  [![Build Status](https://travis-ci.org/kujtimiihoxha/kit.svg?branch=master)](https://travis-ci.org/kujtimiihoxha/kit)[![Go Report Card](https://goreportcard.com/badge/github.com/kirinse/kit)](https://goreportcard.com/report/github.com/kirinse/kit)[![Coverage Status](https://coveralls.io/repos/github/kirinse/kit/badge.svg?branch=master)](https://coveralls.io/github/kirinse/kit?branch=master)
 I fork the project from [kit](https://github.com/kujtimiihoxha/kit) and plan to maintain it in the future. The kit tool is a great job, and deeply used in our team. Some features and bugs have been done and fixed, such as supporting go module,replacing some old dependencies and so on. I am very glad to receive recommend about it.  
 
 This project is a more advanced version of [gk](https://github.com/kujtimiihoxha/gk).
@@ -24,11 +24,11 @@ This is what `GoKit Cli` is aiming to change.
 # Installation
 Before you install please read [prerequisites](#prerequisites)
 ```bash
-git clone https://github.com/GrantZheng/kit.git
+git clone https://github.com/kirinse/kit.git
 cd kit
 go install 
 ```
-:warning: **Notice**: to install package, do not use `go get github.com/GrantZheng/kit`, which could generate kit binary refers to the original repo code. Some methods have been discussed [here](https://stackoverflow.com/questions/54721986/issues-with-go-build-on-forked-repository)，but I haven't found a better way to solve this problem.
+:warning: **Notice**: to install package, do not use `go get github.com/kirinse/kit`, which could generate kit binary refers to the original repo code. Some methods have been discussed [here](https://stackoverflow.com/questions/54721986/issues-with-go-build-on-forked-repository)，but I haven't found a better way to solve this problem.
 
 # Usage
 ```bash

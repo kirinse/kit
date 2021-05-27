@@ -1,13 +1,11 @@
 package generator
 
 import (
-	"path"
-
-	"runtime"
-
-	"github.com/kujtimiihoxha/kit/parser"
-	"github.com/kujtimiihoxha/kit/utils"
+	"github.com/kirinse/kit/parser"
+	"github.com/kirinse/kit/utils"
 	"github.com/spf13/viper"
+	"path"
+	"runtime"
 )
 
 func setDefaults() {

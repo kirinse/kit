@@ -2,16 +2,14 @@ package generator
 
 import (
 	"fmt"
-	"path"
-
-	"strings"
-
 	"github.com/dave/jennifer/jen"
-	"github.com/kujtimiihoxha/kit/fs"
-	"github.com/kujtimiihoxha/kit/parser"
-	"github.com/kujtimiihoxha/kit/utils"
+	"github.com/kirinse/kit/fs"
+	"github.com/kirinse/kit/parser"
+	"github.com/kirinse/kit/utils"
 	"github.com/sirupsen/logrus"
 	"github.com/spf13/viper"
+	"path"
+	"strings"
 )
 
 // GenerateClient implements Gen and it is used to generate
@@ -463,7 +461,7 @@ func (g *generateGRPCClient) generateDecodeEncodeMethods(endpointImport string) 
 			"",
 			jen.Return(
 				jen.Nil(), jen.Qual("errors", "New").Call(
-					jen.Lit(fmt.Sprintf("'%s' Encoder is not impelemented", utils.ToCamelCase(g.name))),
+					jen.Lit(fmt.Sprintf("'%s' Encoder is not implemented", utils.ToCamelCase(g.name))),
 				),
 			),
 		)
@@ -487,7 +485,7 @@ func (g *generateGRPCClient) generateDecodeEncodeMethods(endpointImport string) 
 			"",
 			jen.Return(
 				jen.Nil(), jen.Qual("errors", "New").Call(
-					jen.Lit(fmt.Sprintf("'%s' Decoder is not impelemented", utils.ToCamelCase(g.name))),
+					jen.Lit(fmt.Sprintf("'%s' Decoder is not implemented", utils.ToCamelCase(g.name))),
 				),
 			),
 		)

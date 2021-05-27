@@ -1,10 +1,9 @@
 package utils
 
 import (
+	. "github.com/smartystreets/goconvey/convey"
 	"runtime"
 	"testing"
-
-	. "github.com/smartystreets/goconvey/convey"
 )
 
 func TestToCamelCase(t *testing.T) {

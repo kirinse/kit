@@ -1,17 +1,15 @@
 package utils
 
 import (
+	"fmt"
+	"github.com/alioygur/godash"
+	"github.com/kirinse/kit/fs"
+	"github.com/spf13/viper"
+	"golang.org/x/tools/imports"
 	"os"
 	"path/filepath"
 	"runtime"
 	"strings"
-
-	"fmt"
-
-	"github.com/alioygur/godash"
-	"github.com/kujtimiihoxha/kit/fs"
-	"github.com/spf13/viper"
-	"golang.org/x/tools/imports"
 )
 
 // ToLowerFirstCamelCase returns the given string in camelcase formatted string

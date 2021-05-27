@@ -3,14 +3,13 @@ package parser
 import (
 	"bytes"
 	"fmt"
+	"github.com/kirinse/kit/utils"
+	"github.com/sirupsen/logrus"
 	"go/ast"
 	"go/format"
 	"go/parser"
 	"go/token"
 	"strings"
-
-	"github.com/kujtimiihoxha/kit/utils"
-	"github.com/sirupsen/logrus"
 )
 
 // FileParser is the parser used by kit to parse go files.

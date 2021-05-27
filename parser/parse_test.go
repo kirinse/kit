@@ -1,9 +1,8 @@
 package parser
 
 import (
-	"testing"
-
 	. "github.com/smartystreets/goconvey/convey"
+	"testing"
 )
 
 func TestFileParser_Parse(t *testing.T) {

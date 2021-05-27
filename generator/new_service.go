@@ -3,14 +3,13 @@ package generator
 import (
 	"bytes"
 	"fmt"
+	"github.com/dave/jennifer/jen"
+	"github.com/kirinse/kit/fs"
+	"github.com/kirinse/kit/utils"
+	"github.com/spf13/viper"
 	"os/exec"
 	"path"
 	"strings"
-
-	"github.com/dave/jennifer/jen"
-	"github.com/kujtimiihoxha/kit/fs"
-	"github.com/kujtimiihoxha/kit/utils"
-	"github.com/spf13/viper"
 )
 
 // NewService implements Gen and is used to create a new service.
