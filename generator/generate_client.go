@@ -155,7 +155,7 @@ func newGenerateHTTPClient(name string, serviceInterface parser.Interface, servi
 	return i
 }
 func (g *generateHTTPClient) Generate() (err error) {
-	g.CreateFolderStructure(g.destPath)
+	_ = g.CreateFolderStructure(g.destPath)
 	endpointImport, err := utils.GetEndpointImportPath(g.name)
 	if err != nil {
 		return err
@@ -165,13 +165,13 @@ func (g *generateHTTPClient) Generate() (err error) {
 		return err
 	}
 	g.code.appendMultilineComment([]string{
-		"New returns an AddService backed by an HTTP server living at the remote",
+		"New returns an " + g.interfaceName + " backed by an HTTP server living at the remote",
 		"instance. We expect instance to come from a service discovery system, so",
 		"likely of the form \"host:port\".",
 	})
 
 	g.code.NewLine()
-	handles := []jen.Code{}
+	var handles []jen.Code
 	respS := jen.Dict{}
 	for _, m := range g.serviceInterface.Methods {
 		respS[jen.Id(m.Name+"Endpoint")] = jen.Id(utils.ToLowerFirstCamelCase(m.Name) + "Endpoint")

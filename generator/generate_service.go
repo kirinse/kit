@@ -18,23 +18,23 @@ var SupportedTransports = []string{"http", "grpc"}
 // GenerateService implements Gen and is used to generate the service.
 type GenerateService struct {
 	BaseGenerator
-	pg                                   *PartialGenerator
-	name                                 string
-	transport                            string
-	pbPath                               string
-	pbImportPath                         string
-	interfaceName                        string
-	serviceStructName                    string
-	destPath                             string
-	methods                              []string
-	filePath                             string
-	file                                 *parser.File
-	serviceInterface                     parser.Interface
-	sMiddleware, gorillaMux, eMiddleware bool
+	pg                                               *PartialGenerator
+	name                                             string
+	transport                                        string
+	pbPath                                           string
+	pbImportPath                                     string
+	interfaceName                                    string
+	serviceStructName                                string
+	destPath                                         string
+	methods                                          []string
+	filePath                                         string
+	file                                             *parser.File
+	serviceInterface                                 parser.Interface
+	sMiddleware, gorillaMux, eMiddleware, repository bool
 }
 
 // NewGenerateService returns a initialized and ready generator.
-func NewGenerateService(name, transport, pbPath, pbImportPath string, sMiddleware, gorillaMux, eMiddleware bool, methods []string) Gen {
+func NewGenerateService(name, transport, pbPath, pbImportPath string, sMiddleware, gorillaMux, eMiddleware, repository bool, methods []string) Gen {
 	i := &GenerateService{
 		name:          name,
 		interfaceName: utils.ToCamelCase(name + "Service"),
@@ -43,6 +43,7 @@ func NewGenerateService(name, transport, pbPath, pbImportPath string, sMiddlewar
 		eMiddleware:   eMiddleware,
 		gorillaMux:    gorillaMux,
 		methods:       methods,
+		repository:    repository,
 	}
 	i.filePath = path.Join(i.destPath, viper.GetString("gk_service_file_name"))
 	i.pg = NewPartialGenerator(nil)
@@ -91,7 +92,7 @@ func (g *GenerateService) Generate() (err error) {
 	}
 	g.generateServiceStruct()
 	g.generateServiceMethods()
-	g.generateNewBasicStructMethod()
+	//g.generateNewBasicStructMethod()
 	g.generateNewMethod()
 	svcSrc += "\n" + g.pg.String()
 	s, err := utils.GoImportsSource(g.destPath, svcSrc)
@@ -127,7 +128,7 @@ func (g *GenerateService) Generate() (err error) {
 	if err != nil {
 		return err
 	}
-	mG := newGenerateCmd(g.name, g.pbImportPath, g.serviceInterface, g.sMiddleware, g.eMiddleware, g.methods)
+	mG := newGenerateCmd(g.name, g.pbImportPath, g.serviceInterface, g.sMiddleware, g.eMiddleware, g.repository, g.methods)
 	return mG.Generate()
 }
 func (g *GenerateService) generateServiceMethods() {
@@ -196,9 +197,10 @@ func (g *GenerateService) generateNewMethod() {
 		"New returns a %s with all of the expected middleware wired in.",
 		g.interfaceName,
 	).Line()
-	fn := fmt.Sprintf("New%s", utils.ToCamelCase(g.serviceStructName))
+	//fn := fmt.Sprintf("New%s", utils.ToCamelCase(g.serviceStructName))
 	body := []jen.Code{
-		jen.Var().Id("svc").Id(g.interfaceName).Op("=").Id(fn).Call(),
+		//jen.Var().Id("svc").Id(g.interfaceName).Op("=").Id(fn).Call(),
+		jen.Var().Id("svc").Id(g.interfaceName).Op("=").Id(fmt.Sprintf("&%s{}", g.serviceStructName)).Line(),
 		jen.For(
 			jen.List(jen.Id("_"), jen.Id("m")).Op(":=").Range().Id("middleware"),
 		).Block(
@@ -1360,7 +1362,8 @@ func (g *generateCmdBase) Generate() (err error) {
 					opt[jen.Lit(v.Name)] =
 						jen.Values(
 							jen.List(
-								jen.Qual("github.com/go-kit/kit/transport/grpc", "ServerErrorLogger").Call(jen.Id("logger")),
+								jen.Id("errorHandler"),
+								//jen.Qual("github.com/go-kit/kit/transport/grpc", "ServerErrorLogger").Call(jen.Id("logger")),
 								jen.Qual("github.com/go-kit/kit/transport/grpc", "ServerBefore").Call(
 									jen.Qual("github.com/go-kit/kit/tracing/opentracing", "GRPCToContext").Call(
 										jen.Id("tracer"),
@@ -1374,6 +1377,11 @@ func (g *generateCmdBase) Generate() (err error) {
 			}
 		}
 		pl := NewPartialGenerator(nil)
+		pl.Raw().Id("errorHandler").Op(":=").Qual("github.com/go-kit/kit/transport/grpc", "ServerErrorHandler").Call(
+			jen.Qual("github.com/go-kit/kit/transport", "NewLogErrorHandler").Call(
+				jen.Qual("github.com/go-kit/kit/log/level", "Error").Call(jen.Id("logger")),
+			),
+		).Line()
 		pl.Raw().Id("options").Op(":=").Map(jen.String()).Index().Qual(
 			"github.com/go-kit/kit/transport/grpc",
 			"ServerOption",
@@ -1499,11 +1507,12 @@ type generateCmd struct {
 	grpcFilePath                       string
 	generateSvcDefaultsMiddleware      bool
 	generateEndpointDefaultsMiddleware bool
+	generateRepository                 bool
 	serviceInterface                   parser.Interface
 }
 
 func newGenerateCmd(name, pbImportPath string, serviceInterface parser.Interface,
-	generateSacDefaultsMiddleware bool, generateEndpointDefaultsMiddleware bool, methods []string) Gen {
+	generateSacDefaultsMiddleware bool, generateEndpointDefaultsMiddleware bool, generateRepository bool, methods []string) Gen {
 	t := &generateCmd{
 		name:                               name,
 		methods:                            methods,
@@ -1514,6 +1523,7 @@ func newGenerateCmd(name, pbImportPath string, serviceInterface parser.Interface
 		serviceInterface:                   serviceInterface,
 		generateSvcDefaultsMiddleware:      generateSacDefaultsMiddleware,
 		generateEndpointDefaultsMiddleware: generateEndpointDefaultsMiddleware,
+		generateRepository:                 generateRepository,
 	}
 	t.filePath = path.Join(t.destPath, viper.GetString("gk_cmd_svc_file_name"))
 	t.httpFilePath = path.Join(t.httpDestPath, viper.GetString("gk_http_file_name"))
@@ -1676,7 +1686,7 @@ func (g *generateCmd) generateRun() (*PartialGenerator, error) {
 
 	pg.Raw().Var().Id("sentryClient").Id("*").Qual("github.com/getsentry/sentry-go", "Client").Line()
 	pg.Raw().List(
-		jen.Id("logger"),
+		jen.Id("kitLogger"),
 		jen.Id("sentryClient"),
 	).Op("=").Qual("github.com/kirinse/go-utils/logger/sentry", "NewKitSentryLogger").Call(
 		jen.Qual("os", "Getenv").Call(jen.Lit("SENTRY_DSN")),
@@ -1718,7 +1728,7 @@ func (g *generateCmd) generateRun() (*PartialGenerator, error) {
 		Call(
 			jen.Id("jaegerURL"),
 			jen.Id("SRV_NAME"),
-			jen.Id("logger"),
+			jen.Id("kitLogger"),
 		).Line()
 	pg.Raw().If(
 		jen.Id("closer").Op("!=").Nil().Block(
@@ -1726,19 +1736,75 @@ func (g *generateCmd) generateRun() (*PartialGenerator, error) {
 		),
 	).Line()
 
+	//repository
+	if g.generateRepository {
+		pg.Raw().Var().Id("db").Id("*").Qual("gorm.io/gorm", "DB").Line().Block(
+			jen.Var().Id("err").Error(),
+			jen.Id("logLevel").Op(":=").Qual("gorm.io/gorm/logger", "Error"),
+			jen.If(jen.Id("!*disableDbLog")).Block(
+				jen.Id("logLevel").Op("=").Qual("gorm.io/gorm/logger", "Info"),
+			),
+			jen.Id("gormConfig").Op(":=").Id("&").Qual("gorm.io/gorm", "Config").Values(
+				jen.Dict{
+					jen.Id("Logger"):      jen.Qual("gorm.io/gorm/logger", "Default").Dot("LogMode").Call(jen.Id("logLevel")),
+					jen.Id("PrepareStmt"): jen.Lit(true),
+				},
+			),
+			jen.List(jen.Id("db"), jen.Id("err")).Op("=").
+				Qual("gorm.io/gorm", "Open").Call(
+				jen.Qual("gorm.io/driver/mysql", "Open").Call(jen.Id("*dbUrl")),
+				jen.Id("gormConfig"),
+			),
+			jen.If(jen.Id("err").Op("!=").Nil()).Block(
+				jen.Qual("github.com/go-kit/kit/log/level", "Error").Call(jen.Id("kitLogger")).Dot("Log").Call(
+					jen.Lit("database"),
+					jen.Lit("mysql"),
+					jen.Lit("addr"),
+					jen.Id("*dbUrl"),
+					jen.Lit("err"),
+					jen.Id("err"),
+				),
+				jen.Return(),
+			),
+			jen.Comment("// gorm opentracing"),
+			jen.Id("db").Dot("Use").Call(jen.Qual("gorm.io/plugin/opentracing", "New").Call()),
+			jen.Comment("// gorm prometheus"),
+			jen.Id("db").Dot("Use").Call(jen.Qual("gorm.io/plugin/prometheus", "New").Call(
+				jen.Qual("gorm.io/plugin/prometheus", "Config").Values(
+					jen.Dict{
+						jen.Id("DBName"):          jen.Id("SVC_NAME"),
+						jen.Id("RefreshInterval"): jen.Lit(1500),
+						jen.Id("MetricsCollector"): jen.Id("[]").Qual("gorm.io/plugin/prometheus", "MetricsCollector").Values(
+							jen.Id("&").Qual("gorm.io/plugin/prometheus", "MySQL").Values(
+								jen.Dict{
+									jen.Id("VariableNames"): jen.Id("[]string{").Lit("Threads_running").Id("}"),
+								},
+							),
+						),
+					},
+				),
+			)),
+			jen.List(jen.Id("sqlDB"), jen.Id("_")).Op(":=").Id("db").Dot("DB").Call(),
+			jen.Id("sqlDB").Dot("SetMaxIdleConns").Call(jen.Lit(6)),
+			jen.Id("sqlDB").Dot("SetMaxOpenConns").Call(jen.Lit(12)),
+			jen.Id("sqlDB").Dot("SetConnMaxIdleTime").Call(jen.Qual("time", "Hour")),
+			jen.Id("sqlDB").Dot("SetConnMaxLifetime").Call(jen.Qual("time", "Hour").Op("*").Lit(24)),
+			jen.Defer().Id("sqlDB").Dot("Close").Call(),
+		).Line()
+	}
 	pg.Raw().Id("svc").Op(":=").Qual(svcImport, "New").Call(
-		jen.Id("getServiceMiddleware").Call(jen.Id("logger")),
+		jen.Id("getServiceMiddleware").Call(jen.Id("kitLogger")),
 	).Line()
 	pg.Raw().Id("eps").Op(":=").Qual(epImport, "New").Call(
 		jen.Id("svc"),
-		jen.Id("getEndpointMiddleware").Call(jen.Id("logger")),
+		jen.Id("getEndpointMiddleware").Call(jen.Id("kitLogger")),
 	).Line()
 	pg.Raw().Id("g").Op(":=").Id("createService").Call(
 		jen.Id("eps"),
 	).Line()
 	pg.Raw().Id("initMetricsEndpoint").Call(jen.Id("g")).Line()
 	pg.Raw().Id("initCancelInterrupt").Call(jen.Id("g")).Line()
-	pg.Raw().Qual("github.com/go-kit/kit/log/level", "Info").Call(jen.Id("logger")).Dot("Log").Call(
+	pg.Raw().Qual("github.com/go-kit/kit/log/level", "Info").Call(jen.Id("kitLogger")).Dot("Log").Call(
 		jen.Lit("exit"),
 		jen.Id("g").Dot("Run").Call(),
 	).Line()
@@ -1750,7 +1816,7 @@ func (g *generateCmd) generateVars() {
 		g.code.Raw().Const().Id("SVC_NAME").Op("=").Lit(utils.ToLowerSnakeCase(g.name)).Line()
 
 		//g.code.Raw().Var().Id("tracer").Qual("github.com/opentracing/opentracing-go", "Tracer").Line()
-		g.code.Raw().Var().Id("logger").Qual("github.com/go-kit/kit/log", "Logger").Line()
+		g.code.Raw().Var().Id("kitLogger").Qual("github.com/go-kit/kit/log", "Logger").Line()
 		//g.code.appendMultilineComment(
 		//	[]string{
 		//		"Define our flags. Your service probably won't need to bind listeners for",
@@ -1785,6 +1851,20 @@ func (g *generateCmd) generateVars() {
 			jen.Lit("Enable Jaeger tracing via a collector URL e.g. localhost:6831"),
 		)
 		g.code.NewLine()
+		if g.generateRepository {
+			g.code.Raw().Var().Id("dbUrl").Op("=").Id("flagSet").Dot("String").Call(
+				jen.Lit("db-url"),
+				jen.Lit(""),
+				jen.Lit("database DSN e.g. root:1234%qwerT@tcp(dark918p.local:3307)/withdraw_srv?parseTime=True"),
+			)
+			g.code.NewLine()
+			g.code.Raw().Var().Id("disableDbLog").Op("=").Id("flagSet").Dot("Bool").Call(
+				jen.Lit("disable-dblog"),
+				jen.Lit(false),
+				jen.Lit("disable orm log"),
+			)
+			g.code.NewLine()
+		}
 	}
 }
 func (g *generateCmd) generateInitHTTP() (err error) {
@@ -1805,7 +1885,7 @@ func (g *generateCmd) generateInitHTTP() (err error) {
 
 	pt := NewPartialGenerator(nil)
 	pt.Raw().Id("options").Op(":=").Id("defaultHttpOptions").Call(
-		jen.Id("logger"),
+		jen.Id("kitLogger"),
 		jen.Qual("github.com/opentracing/opentracing-go", "GlobalTracer").Call(),
 	).Line().Comment("Add your http options here").Line().Line()
 	pt.Raw().Id("httpHandler").Op(":=").Qual(httpImport, "NewHTTPHandler").Call(
@@ -1819,7 +1899,7 @@ func (g *generateCmd) generateInitHTTP() (err error) {
 	).Line()
 	pt.Raw().If(
 		jen.Err().Op("!=").Nil().Block(
-			jen.Qual("github.com/go-kit/kit/log/level", "Error").Call(jen.Id("logger")).Dot("Log").Call(
+			jen.Qual("github.com/go-kit/kit/log/level", "Error").Call(jen.Id("kitLogger")).Dot("Log").Call(
 				jen.Lit("transport"),
 				jen.Lit("HTTP"),
 				jen.Lit("during"),
@@ -1832,7 +1912,7 @@ func (g *generateCmd) generateInitHTTP() (err error) {
 	).Line()
 	pt.Raw().Id("g").Dot("Add").Call(
 		jen.Func().Params().Error().Block(
-			jen.Qual("github.com/go-kit/kit/log/level", "Info").Call(jen.Id("logger")).Dot("Log").Call(
+			jen.Qual("github.com/go-kit/kit/log/level", "Info").Call(jen.Id("kitLogger")).Dot("Log").Call(
 				jen.Lit("transport"),
 				jen.Lit("HTTP"),
 				jen.Lit("addr"),
@@ -1885,7 +1965,7 @@ func (g *generateCmd) generateInitGRPC() (err error) {
 
 	pt := NewPartialGenerator(nil)
 	pt.Raw().Id("options").Op(":=").Id("defaultGRPCOptions").Call(
-		jen.Id("logger"),
+		jen.Id("kitLogger"),
 		jen.Qual("github.com/opentracing/opentracing-go", "GlobalTracer").Call(),
 	).Line().Comment("Add your GRPC options here").Line().Line()
 	pt.Raw().Id("grpcServer").Op(":=").Qual(grpcImport, "NewGRPCServer").Call(
@@ -1899,7 +1979,7 @@ func (g *generateCmd) generateInitGRPC() (err error) {
 	).Line()
 	pt.Raw().If(
 		jen.Err().Op("!=").Nil().Block(
-			jen.Qual("github.com/go-kit/kit/log/level", "Error").Call(jen.Id("logger")).Dot("Log").Call(
+			jen.Qual("github.com/go-kit/kit/log/level", "Error").Call(jen.Id("kitLogger")).Dot("Log").Call(
 				jen.Lit("transport"),
 				jen.Lit("gRPC"),
 				jen.Lit("during"),
@@ -1912,7 +1992,7 @@ func (g *generateCmd) generateInitGRPC() (err error) {
 	).Line()
 	pt.Raw().Id("g").Dot("Add").Call(
 		jen.Func().Params().Error().Block(
-			jen.Id("logger").Dot("Log").Call(
+			jen.Qual("github.com/go-kit/kit/log/level", "Error").Call(jen.Id("kitLogger")).Dot("Log").Call(
 				jen.Lit("transport"),
 				jen.Lit("gRPC"),
 				jen.Lit("addr"),
@@ -2012,6 +2092,16 @@ func (g *generateCmd) generateGetMiddleware() (err error) {
 	c = append(
 		c,
 		jen.Comment("Add you endpoint middleware here").Line(),
+		jen.For(jen.Id("m")).Op(":=").Range().Id("mw").Block(
+			jen.Id("mw").Index(jen.Id("m")).Op("=").
+				Append(
+					jen.Id("mw").Index(jen.Id("m")),
+					jen.Qual("github.com/go-kit/kit/tracing/opentracing", "TraceServer").Call(
+						jen.Qual("github.com/opentracing/opentracing-go", "GlobalTracer").Call(),
+						jen.Id("m"),
+					),
+				),
+		),
 		jen.Return(),
 	)
 	g.code.appendFunction(
@@ -2052,7 +2142,7 @@ func (g *generateCmd) generateDefaultMetrics() {
 			),
 			jen.If(
 				jen.Err().Op("!=").Nil().Block(
-					jen.Qual("github.com/go-kit/kit/log/level", "Error").Call(jen.Id("logger")).Dot("Log").Call(
+					jen.Qual("github.com/go-kit/kit/log/level", "Error").Call(jen.Id("kitLogger")).Dot("Log").Call(
 						jen.Lit("transport"),
 						jen.Lit("debug/HTTP"),
 						jen.Lit("during"),
@@ -2065,7 +2155,7 @@ func (g *generateCmd) generateDefaultMetrics() {
 			),
 			jen.Id("g").Dot("Add").Call(
 				jen.Func().Params().Error().Block(
-					jen.Qual("github.com/go-kit/kit/log/level", "Info").Call(jen.Id("logger")).Dot("Log").Call(
+					jen.Qual("github.com/go-kit/kit/log/level", "Info").Call(jen.Id("kitLogger")).Dot("Log").Call(
 						jen.Lit("transport"),
 						jen.Lit("debug/HTTP"),
 						jen.Lit("addr"),

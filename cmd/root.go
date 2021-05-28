@@ -29,7 +29,7 @@ func Execute() {
 
 func init() {
 	RootCmd.PersistentFlags().BoolP("debug", "d", false, "If you want to see the debug logs.")
-	RootCmd.PersistentFlags().BoolP("force", "f", false, "Force overide existing files without asking.")
+	RootCmd.PersistentFlags().BoolP("force", "f", false, "Force override existing files without asking.")
 	RootCmd.PersistentFlags().StringP("folder", "b", "", "If you want to specify the base folder of the project.")
 
 	viper.BindPFlag("gk_folder", RootCmd.PersistentFlags().Lookup("folder"))

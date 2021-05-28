@@ -735,7 +735,7 @@ func (g *generateGRPCTransportProto) Generate() (err error) {
 	if !viper.GetBool("gk_testing") {
 		cmd := exec.Command("protoc", g.pbFilePath, "--go_out=plugins=grpc,paths=source_relative:.")
 		cmd.Stdout = os.Stdout
-		logrus.Warn(cmd)
+
 		err = cmd.Run()
 		if err != nil {
 			return err
