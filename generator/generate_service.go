@@ -1508,6 +1508,8 @@ type generateCmd struct {
 	generateSvcDefaultsMiddleware      bool
 	generateEndpointDefaultsMiddleware bool
 	generateRepository                 bool
+	repositoryDestPath                 string
+	repositoryFilePath                 string
 	serviceInterface                   parser.Interface
 }
 
@@ -1524,10 +1526,12 @@ func newGenerateCmd(name, pbImportPath string, serviceInterface parser.Interface
 		generateSvcDefaultsMiddleware:      generateSacDefaultsMiddleware,
 		generateEndpointDefaultsMiddleware: generateEndpointDefaultsMiddleware,
 		generateRepository:                 generateRepository,
+		repositoryDestPath:                 fmt.Sprintf(viper.GetString("gk_repository_path_format"), utils.ToLowerSnakeCase(name)),
 	}
 	t.filePath = path.Join(t.destPath, viper.GetString("gk_cmd_svc_file_name"))
 	t.httpFilePath = path.Join(t.httpDestPath, viper.GetString("gk_http_file_name"))
 	t.grpcFilePath = path.Join(t.grpcDestPath, viper.GetString("gk_grpc_file_name"))
+	t.repositoryFilePath = path.Join(t.repositoryDestPath, viper.GetString("gk_repository_file_name"))
 	t.srcFile = jen.NewFile("service")
 	t.pbImportPath = pbImportPath
 	t.InitPg()
@@ -1591,6 +1595,17 @@ func (g *generateCmd) Generate() (err error) {
 		err = g.generateInitGRPC()
 		if err != nil {
 			return err
+		}
+	}
+	if g.generateRepository {
+		b, err := g.fs.Exists(g.repositoryFilePath)
+		if err != nil {
+			return err
+		} else if !b {
+			err = g.generateRepositoryFile()
+			if err != nil {
+				return err
+			}
 		}
 	}
 	err = g.generateGetMiddleware()
@@ -1724,7 +1739,8 @@ func (g *generateCmd) generateRun() (*PartialGenerator, error) {
 		return nil, err
 	}
 
-	pg.Raw().Id("closer").Op(":=").Qual("github.com/kirinse/go-utils/tracer", "NewJaegerTracer").
+	pg.Raw().Id("closer").Op(":=").
+		Qual("github.com/kirinse/go-utils/tracer", "NewJaegerTracer").
 		Call(
 			jen.Id("jaegerURL"),
 			jen.Id("SRV_NAME"),
@@ -1851,6 +1867,12 @@ func (g *generateCmd) generateVars() {
 			jen.Lit("Enable Jaeger tracing via a collector URL e.g. localhost:6831"),
 		)
 		g.code.NewLine()
+		g.code.Raw().Var().Id("consulAddr").Op("=").Id("flagSet").Dot("String").Call(
+			jen.Lit("consul-addr"),
+			jen.Lit(""),
+			jen.Lit("consul address e.g. localhost:8500"),
+		)
+		g.code.NewLine()
 		if g.generateRepository {
 			g.code.Raw().Var().Id("dbUrl").Op("=").Id("flagSet").Dot("String").Call(
 				jen.Lit("db-url"),
@@ -1910,6 +1932,37 @@ func (g *generateCmd) generateInitHTTP() (err error) {
 			jen.Return(),
 		),
 	).Line()
+	pt.Raw().Comment("// register to consul for service discovery").Line()
+	pt.Raw().Var().Id("register").Id("*").Qual("github.com/go-kit/kit/sd/consul", "Registrar").Line()
+	pt.Raw().If(
+		jen.Id("*consulAddr").Op("!=").Lit(""),
+	).Block(
+		jen.Id("port").Op(":=").Id("httpListener").Dot("Addr").Call().
+			Dot("(*net.TCPAddr)").Dot("Port"),
+		jen.Id("ips").Op(":=").
+			Qual("github.com/kirinse/go-utils/tools/ip", "GetOutboundIP").Call(),
+		jen.Id("consulReg").Op(":=").Qual("github.com/kirinse/go-utils/grpc/sd/consul", "NewConsulRegister").
+			Call(jen.Id("SVC_NAME"), jen.Id("ips"), jen.Id("port"), jen.Id("[]string{}")),
+		jen.List(jen.Id("register"), jen.Id("err")).Op("=").
+			Id("consulReg").Dot("NewConsulHTTPRegister").Call(
+			jen.Qual("github.com/go-kit/kit/log", "WithPrefix").Call(
+				jen.Id("kitLogger"),
+				jen.Lit("component"),
+				jen.Lit("sd"),
+			),
+		),
+		jen.If(jen.Id("err").Op("!=").Nil()).Block(
+			jen.Qual("github.com/go-kit/kit/log/level", "Error").Call(
+				jen.Id("kitLogger"),
+			).Dot("Log").Call(
+				jen.Lit("during"),
+				jen.Lit("NewConsulHTTPRegister"),
+				jen.Lit("err"),
+				jen.Id("err"),
+			),
+			jen.Return(),
+		),
+	).Line()
 	pt.Raw().Id("g").Dot("Add").Call(
 		jen.Func().Params().Error().Block(
 			jen.Qual("github.com/go-kit/kit/log/level", "Info").Call(jen.Id("kitLogger")).Dot("Log").Call(
@@ -1917,6 +1970,9 @@ func (g *generateCmd) generateInitHTTP() (err error) {
 				jen.Lit("HTTP"),
 				jen.Lit("addr"),
 				jen.Id("*httpAddr"),
+			),
+			jen.If(jen.Id("register").Op("!=").Nil()).Block(
+				jen.Id("register").Dot("Register").Call(),
 			),
 			jen.Return(
 				jen.Qual("net/http", "Serve").Call(
@@ -1926,6 +1982,9 @@ func (g *generateCmd) generateInitHTTP() (err error) {
 			),
 		),
 		jen.Func().Params(jen.Error()).Block(
+			jen.If(jen.Id("register").Op("!=").Nil()).Block(
+				jen.Id("register").Dot("Deregister").Call(),
+			),
 			jen.Id("httpListener").Dot("Close").Call(),
 		),
 	).Line()
@@ -1990,6 +2049,39 @@ func (g *generateCmd) generateInitGRPC() (err error) {
 			jen.Return(),
 		),
 	).Line()
+
+	pt.Raw().Comment("// register to consul for service discovery").Line()
+	pt.Raw().Var().Id("register").Id("*").Qual("github.com/go-kit/kit/sd/consul", "Registrar").Line()
+	pt.Raw().If(
+		jen.Id("*consulAddr").Op("!=").Lit(""),
+	).Block(
+		jen.Id("port").Op(":=").Id("grpcListener").Dot("Addr").Call().
+			Dot("(*net.TCPAddr)").Dot("Port"),
+		jen.Id("ips").Op(":=").
+			Qual("github.com/kirinse/go-utils/tools/ip", "GetOutboundIP").Call(),
+		jen.Id("consulReg").Op(":=").Qual("github.com/kirinse/go-utils/grpc/sd/consul", "NewConsulRegister").
+			Call(jen.Id("SVC_NAME"), jen.Id("ips"), jen.Id("port"), jen.Id("[]string{}")),
+		jen.List(jen.Id("register"), jen.Id("err")).Op("=").
+			Id("consulReg").Dot("NewConsulGRPCRegister").Call(
+			jen.Qual("github.com/go-kit/kit/log", "WithPrefix").Call(
+				jen.Id("kitLogger"),
+				jen.Lit("component"),
+				jen.Lit("sd"),
+			),
+		),
+		jen.If(jen.Id("err").Op("!=").Nil()).Block(
+			jen.Qual("github.com/go-kit/kit/log/level", "Error").Call(
+				jen.Id("kitLogger"),
+			).Dot("Log").Call(
+				jen.Lit("during"),
+				jen.Lit("NewConsulGRPCRegister"),
+				jen.Lit("err"),
+				jen.Id("err"),
+			),
+			jen.Return(),
+		),
+	).Line()
+
 	pt.Raw().Id("g").Dot("Add").Call(
 		jen.Func().Params().Error().Block(
 			jen.Qual("github.com/go-kit/kit/log/level", "Error").Call(jen.Id("kitLogger")).Dot("Log").Call(
@@ -1998,10 +2090,21 @@ func (g *generateCmd) generateInitGRPC() (err error) {
 				jen.Lit("addr"),
 				jen.Id("*grpcAddr"),
 			),
-			jen.Id("baseServer").Op(":=").Qual("google.golang.org/grpc", "NewServer").Call(),
+			jen.Id("baseServer").Op(":=").Qual("github.com/kirinse/go-utils/grpc/server", "MakeGrpcBaseServer").Call(),
+			//jen.Id("baseServer").Op(":=").Qual("google.golang.org/grpc", "NewServer").Call(),
 			jen.Qual(pbImport, fmt.Sprintf("Register%sServer", utils.ToCamelCase(g.name))).Call(
 				jen.Id("baseServer"),
 				jen.Id("grpcServer"),
+			),
+			jen.Qual("github.com/grpc-ecosystem/go-grpc-prometheus", "Register").Call(jen.Id("baseServer")),
+			jen.If(jen.Id("register").Op("!=").Nil()).Block(
+				jen.Comment("//gRPC health check services"),
+				jen.Qual("google.golang.org/grpc/health/grpc_health_v1", "RegisterHealthServer").Call(
+					jen.Id("baseServer"),
+					jen.Id("&").Qual("github.com/kirinse/go-utils/grpc/health", "HealthImpl").Id("{}"),
+				),
+				jen.Comment("//register service to SD"),
+				jen.Id("register").Dot("Register").Call(),
 			),
 			jen.Return(
 				jen.Id("baseServer").Dot("Serve").Call(
@@ -2010,6 +2113,9 @@ func (g *generateCmd) generateInitGRPC() (err error) {
 			),
 		),
 		jen.Func().Params(jen.Error()).Block(
+			jen.If(jen.Id("register").Op("!=").Nil()).Block(
+				jen.Id("register").Dot("Deregister").Call(),
+			),
 			jen.Id("grpcListener").Dot("Close").Call(),
 		),
 	).Line()
@@ -2260,4 +2366,47 @@ func (g *generateCmd) generateBanner() error {
 		),
 	)
 	return g.fs.WriteFile(bannerFilePath, src.GoString(), false)
+}
+func (g *generateCmd) generateRepositoryFile() error {
+	if err := g.CreateFolderStructure(g.repositoryDestPath); err != nil {
+		return err
+	}
+	src := jen.NewFile("repository")
+	src.Const().Id("TracingSpanKind").Op("=").Lit("repository")
+	src.Type().Id("R").Struct(
+		jen.Id("db").Id("*").Qual("gorm.io/gorm", "DB"),
+		jen.Id("logger").Qual("github.com/go-kit/kit/log", "Logger"),
+		jen.Id("debug").Bool(),
+	)
+
+	pt := NewPartialGenerator(nil)
+	pt.appendFunction(
+		"New",
+		nil,
+		[]jen.Code{
+			jen.Id("db").Id("*gorm.DB"),
+			jen.Id("logger").Id("log.Logger"),
+			jen.Id("debug").Bool(),
+		},
+		[]jen.Code{
+			jen.Id("*R"),
+			jen.Id("error"),
+		},
+		"",
+		jen.Id("rLogger").Op(":=").Qual("github.com/go-kit/kit/log", "WithPrefix").Call(
+			jen.Id("logger"),
+			jen.Lit("component"),
+			jen.Id("TracingSpanKind"),
+		).Line(),
+		jen.Return(
+			jen.Id("&R").Values(
+				jen.Id("db"),
+				jen.Id("rLogger"),
+				jen.Id("debug"),
+			),
+			jen.Id("db").Dot("AutoMigrate").Call(),
+		),
+	)
+	src.Add(pt.Raw())
+	return g.fs.WriteFile(g.repositoryFilePath, src.GoString(), false)
 }

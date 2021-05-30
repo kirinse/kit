@@ -585,7 +585,7 @@ func (g *generateHTTPTransportBase) Generate() (err error) {
 					handles = append(
 						handles,
 						jen.Id("make"+m.Name+"Handler").Call(
-							jen.Id("m"),
+							jen.Id("a"),
 							jen.Id("endpoints"),
 							jen.Id("options").Index(jen.Lit(m.Name)),
 						),
@@ -598,7 +598,7 @@ func (g *generateHTTPTransportBase) Generate() (err error) {
 			handles = append(
 				handles,
 				jen.Id("make"+m.Name+"Handler").Call(
-					jen.Id("m"),
+					jen.Id("a"),
 					jen.Id("endpoints"),
 					jen.Id("options").Index(jen.Lit(m.Name)),
 				),
@@ -608,7 +608,17 @@ func (g *generateHTTPTransportBase) Generate() (err error) {
 	var body []jen.Code
 	if g.gorillaMux {
 		body = append([]jen.Code{
-			jen.Id("m").Op(":=").Qual("github.com/gorilla/mux", "NewRouter").Call()}, handles...)
+			jen.Id("m").Op(":=").Qual("github.com/gorilla/mux", "NewRouter").Call(),
+			jen.Id("m").Dot("HandleFunc").Call(
+				jen.Lit("/health"),
+				jen.Func().Params(jen.Id("writer").Qual("net/http", "ResponseWriter"), jen.Id("request").Id("*").Qual("net/http", "Request")).Block(
+					jen.Id("writer").Dot("Write").Call(
+						jen.Id("[]byte").Call(jen.Lit("SERVING")),
+					),
+				),
+			).Dot("Methods").Call(jen.Qual("net/http", "MethodGet")),
+			jen.Id("a").Op(":=").Id("m").Dot("PathPrefix").Call(jen.Lit("/api/v1")).Dot("Subrouter").Call(),
+		}, handles...)
 	} else {
 		body = append([]jen.Code{
 			jen.Id("m").Op(":=").Qual("net/http", "NewServeMux").Call()}, handles...)
