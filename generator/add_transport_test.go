@@ -74,7 +74,7 @@ func TestNewGenerateTransport(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			if got := NewGenerateTransport(tt.args.name, tt.args.gorillaMux, tt.args.transport, "", "", tt.args.methods); !reflect.DeepEqual(got, tt.want) {
+			if got := NewGenerateTransport(tt.args.name, tt.args.gorillaMux, tt.args.transport, "", "", tt.args.methods, tt.args.gorillaMux); !reflect.DeepEqual(got, tt.want) {
 				t.Errorf("NewGenerateTransport() = %v, want %v", got, tt.want)
 			}
 		})
@@ -850,7 +850,7 @@ func Test_newGenerateGRPCTransportProto(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			if got := newGenerateGRPCTransportProto(tt.args.name, tt.args.pbPath, tt.args.serviceInterface, tt.args.methods); !reflect.DeepEqual(got, tt.want) {
+			if got := newGenerateGRPCTransportProto(tt.args.name, tt.args.pbPath, tt.args.serviceInterface, tt.args.methods, false); !reflect.DeepEqual(got, tt.want) {
 				t.Errorf("newGenerateGRPCTransportProto() = %v, want %v", got, tt.want)
 			}
 		})

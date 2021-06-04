@@ -58,6 +58,7 @@ var initserviceCmd = &cobra.Command{
 			emw,
 			viper.GetBool("g_s_repository"),
 			methods,
+			viper.GetBool("g_s_grpc_gateway"),
 		)
 		if err := g.Generate(); err != nil {
 			logrus.Error(err)
@@ -76,6 +77,7 @@ func init() {
 	initserviceCmd.Flags().Bool("svc-mdw", false, "If set a default Logging and Instrumental middleware will be created and attached to the service")
 	initserviceCmd.Flags().Bool("endpoint-mdw", false, "If set a default Logging and Tracking middleware will be created and attached to the endpoint")
 	initserviceCmd.Flags().BoolP("repository", "r", false, "If set a default Repository will be created")
+	initserviceCmd.Flags().BoolP("grpc-gateway", "g", false, "If set grpc-gateway will be created")
 
 	viper.BindPFlag("g_s_transport", initserviceCmd.Flags().Lookup("transport"))
 	viper.BindPFlag("g_s_pb_path", initserviceCmd.Flags().Lookup("pb_path"))
@@ -85,4 +87,5 @@ func init() {
 	viper.BindPFlag("g_s_svc_mdw", initserviceCmd.Flags().Lookup("svc-mdw"))
 	viper.BindPFlag("g_s_endpoint_mdw", initserviceCmd.Flags().Lookup("endpoint-mdw"))
 	viper.BindPFlag("g_s_repository", initserviceCmd.Flags().Lookup("repository"))
+	viper.BindPFlag("g_s_grpc_gateway", initserviceCmd.Flags().Lookup("grpc-gateway"))
 }

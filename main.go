@@ -42,9 +42,9 @@ func setDefaults() {
 	viper.SetDefault("gk_grpc_file_name", "handler.go")
 	viper.SetDefault("gk_repository_file_name", "repository.go")
 	if runtime.GOOS == "windows" {
-		viper.SetDefault("gk_grpc_compile_file_name", "compile.bat")
+		viper.SetDefault("gk_grpc_compile_file_name", "pb_compile.bat")
 	} else {
-		viper.SetDefault("gk_grpc_compile_file_name", "compile.sh")
+		viper.SetDefault("gk_grpc_compile_file_name", "Makefile")
 	}
 	viper.SetDefault("gk_service_struct_prefix", "basic")
 

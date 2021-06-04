@@ -85,6 +85,11 @@ func GetHTTPTransportImportPath(name string) (string, error) {
 	return getImportPath(name, "gk_http_path_format")
 }
 
+// GetRepositoryImportPath returns the import path of the service http transport.
+func GetRepositoryImportPath(name string) (string, error) {
+	return getImportPath(name, "gk_repository_path_format")
+}
+
 // GetDockerFileProjectPath returns the path of the project.
 func GetDockerFileProjectPath() (string, error) {
 	gosrc := GetGOPATH() + "/src/"

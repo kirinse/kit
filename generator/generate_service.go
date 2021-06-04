@@ -18,32 +18,33 @@ var SupportedTransports = []string{"http", "grpc"}
 // GenerateService implements Gen and is used to generate the service.
 type GenerateService struct {
 	BaseGenerator
-	pg                                               *PartialGenerator
-	name                                             string
-	transport                                        string
-	pbPath                                           string
-	pbImportPath                                     string
-	interfaceName                                    string
-	serviceStructName                                string
-	destPath                                         string
-	methods                                          []string
-	filePath                                         string
-	file                                             *parser.File
-	serviceInterface                                 parser.Interface
-	sMiddleware, gorillaMux, eMiddleware, repository bool
+	pg                                                                    *PartialGenerator
+	name                                                                  string
+	transport                                                             string
+	pbPath                                                                string
+	pbImportPath                                                          string
+	interfaceName                                                         string
+	serviceStructName                                                     string
+	destPath                                                              string
+	methods                                                               []string
+	filePath                                                              string
+	file                                                                  *parser.File
+	serviceInterface                                                      parser.Interface
+	sMiddleware, gorillaMux, eMiddleware, repository, generateGrpcGateway bool
 }
 
 // NewGenerateService returns a initialized and ready generator.
-func NewGenerateService(name, transport, pbPath, pbImportPath string, sMiddleware, gorillaMux, eMiddleware, repository bool, methods []string) Gen {
+func NewGenerateService(name, transport, pbPath, pbImportPath string, sMiddleware, gorillaMux, eMiddleware, repository bool, methods []string, generateGrpcGateway bool) Gen {
 	i := &GenerateService{
-		name:          name,
-		interfaceName: utils.ToCamelCase(name + "Service"),
-		destPath:      fmt.Sprintf(viper.GetString("gk_service_path_format"), utils.ToLowerSnakeCase(name)),
-		sMiddleware:   sMiddleware,
-		eMiddleware:   eMiddleware,
-		gorillaMux:    gorillaMux,
-		methods:       methods,
-		repository:    repository,
+		name:                name,
+		interfaceName:       utils.ToCamelCase(name + "Service"),
+		destPath:            fmt.Sprintf(viper.GetString("gk_service_path_format"), utils.ToLowerSnakeCase(name)),
+		sMiddleware:         sMiddleware,
+		eMiddleware:         eMiddleware,
+		gorillaMux:          gorillaMux,
+		methods:             methods,
+		repository:          repository,
+		generateGrpcGateway: generateGrpcGateway,
 	}
 	i.filePath = path.Join(i.destPath, viper.GetString("gk_service_file_name"))
 	i.pg = NewPartialGenerator(nil)
@@ -118,7 +119,7 @@ func (g *GenerateService) Generate() (err error) {
 	if err != nil {
 		return err
 	}
-	tp := NewGenerateTransport(g.name, g.gorillaMux, g.transport, g.pbPath, g.pbImportPath, g.methods)
+	tp := NewGenerateTransport(g.name, g.gorillaMux, g.transport, g.pbPath, g.pbImportPath, g.methods, g.generateGrpcGateway)
 	err = tp.Generate()
 	if err != nil {
 		return err
@@ -128,7 +129,16 @@ func (g *GenerateService) Generate() (err error) {
 	if err != nil {
 		return err
 	}
-	mG := newGenerateCmd(g.name, g.pbImportPath, g.serviceInterface, g.sMiddleware, g.eMiddleware, g.repository, g.methods)
+	mG := newGenerateCmd(
+		g.name,
+		g.pbImportPath,
+		g.serviceInterface,
+		g.sMiddleware,
+		g.eMiddleware,
+		g.repository,
+		g.methods,
+		g.generateGrpcGateway,
+	)
 	return mG.Generate()
 }
 func (g *GenerateService) generateServiceMethods() {
@@ -1511,10 +1521,11 @@ type generateCmd struct {
 	repositoryDestPath                 string
 	repositoryFilePath                 string
 	serviceInterface                   parser.Interface
+	generateGrpcGateway                bool
 }
 
 func newGenerateCmd(name, pbImportPath string, serviceInterface parser.Interface,
-	generateSacDefaultsMiddleware bool, generateEndpointDefaultsMiddleware bool, generateRepository bool, methods []string) Gen {
+	generateSacDefaultsMiddleware bool, generateEndpointDefaultsMiddleware bool, generateRepository bool, methods []string, generateGrpcGateway bool) Gen {
 	t := &generateCmd{
 		name:                               name,
 		methods:                            methods,
@@ -1527,6 +1538,7 @@ func newGenerateCmd(name, pbImportPath string, serviceInterface parser.Interface
 		generateEndpointDefaultsMiddleware: generateEndpointDefaultsMiddleware,
 		generateRepository:                 generateRepository,
 		repositoryDestPath:                 fmt.Sprintf(viper.GetString("gk_repository_path_format"), utils.ToLowerSnakeCase(name)),
+		generateGrpcGateway:                generateGrpcGateway,
 	}
 	t.filePath = path.Join(t.destPath, viper.GetString("gk_cmd_svc_file_name"))
 	t.httpFilePath = path.Join(t.httpDestPath, viper.GetString("gk_http_file_name"))
@@ -1807,6 +1819,27 @@ func (g *generateCmd) generateRun() (*PartialGenerator, error) {
 			jen.Id("sqlDB").Dot("SetConnMaxLifetime").Call(jen.Qual("time", "Hour").Op("*").Lit(24)),
 			jen.Defer().Id("sqlDB").Dot("Close").Call(),
 		).Line()
+		repoImportPath, err := utils.GetRepositoryImportPath(g.name)
+		if err != nil {
+			return nil, err
+		}
+		pg.Raw().List(jen.Id("repo"), jen.Id("err")).Op(":=").Qual(repoImportPath, "New").Call(
+			jen.Id("db"),
+			jen.Id("kitLogger"),
+			jen.Id("!*disableDbLog"),
+		).Line()
+		pg.Raw().If(jen.Id("err").Op("!=").Nil()).Block(
+			jen.Qual("github.com/go-kit/kit/log/level", "Error").Call(jen.Id("kitLogger")).Dot("Log").Call(
+				jen.Lit("component"),
+				jen.Lit("repository"),
+				jen.Lit("during"),
+				jen.Lit("New"),
+				jen.Lit("err"),
+				jen.Id("err"),
+			),
+			jen.Return(),
+		).Line()
+		pg.Raw().Comment("// TODO: svc.New(..., repo)").Line()
 	}
 	pg.Raw().Id("svc").Op(":=").Qual(svcImport, "New").Call(
 		jen.Id("getServiceMiddleware").Call(jen.Id("kitLogger")),
@@ -1818,12 +1851,32 @@ func (g *generateCmd) generateRun() (*PartialGenerator, error) {
 	pg.Raw().Id("g").Op(":=").Id("createService").Call(
 		jen.Id("eps"),
 	).Line()
+	//grpc-gateway
+	if g.generateGrpcGateway {
+		pbImport, err := utils.GetPbImportPath(g.name, g.pbImportPath)
+		if err != nil {
+			return nil, err
+		}
+		pg.Raw().Commentf("//TODO: make gen to generate %s/%s.pb.gw.go first", pbImport, g.name).Line()
+		pg.Raw().If(jen.Qual("github.com/kirinse/go-utils/grpc/gateway/v2", "StartGateway").Call(
+			jen.Id("g"),
+			jen.Id("*grpcAddr"),
+			jen.Id("*httpAddr"),
+			jen.Qual("github.com/go-kit/kit/log", "WithPrefix").Call(jen.Id("kitLogger"), jen.Lit("component"), jen.Lit("gateway")),
+			jen.Qual(pbImport, fmt.Sprintf("Register%sHandler", utils.ToCamelCase(g.name))),
+			jen.Lit("openapi"),
+		).Op("!=").Nil()).Block(
+			jen.Return(),
+		).Line()
+	}
 	pg.Raw().Id("initMetricsEndpoint").Call(jen.Id("g")).Line()
 	pg.Raw().Id("initCancelInterrupt").Call(jen.Id("g")).Line()
-	pg.Raw().Qual("github.com/go-kit/kit/log/level", "Info").Call(jen.Id("kitLogger")).Dot("Log").Call(
-		jen.Lit("exit"),
-		jen.Id("g").Dot("Run").Call(),
-	).Line()
+	pg.Raw().Qual("github.com/go-kit/kit/log/level", "Info").
+		Call(jen.Id("kitLogger")).Dot("Log").
+		Call(
+			jen.Lit("exit"),
+			jen.Id("g").Dot("Run").Call(),
+		).Line()
 	return pg, nil
 }
 func (g *generateCmd) generateVars() {
@@ -2084,7 +2137,7 @@ func (g *generateCmd) generateInitGRPC() (err error) {
 
 	pt.Raw().Id("g").Dot("Add").Call(
 		jen.Func().Params().Error().Block(
-			jen.Qual("github.com/go-kit/kit/log/level", "Error").Call(jen.Id("kitLogger")).Dot("Log").Call(
+			jen.Qual("github.com/go-kit/kit/log/level", "Info").Call(jen.Id("kitLogger")).Dot("Log").Call(
 				jen.Lit("transport"),
 				jen.Lit("gRPC"),
 				jen.Lit("addr"),
@@ -2334,6 +2387,29 @@ func (g *generateCmd) generateCmdMain() error {
 		return err
 	} else if b {
 		return nil
+	}
+	if g.generateGrpcGateway {
+		toolsFilePath := path.Join(utils.ToLowerSnakeCase(g.name), "tools.go")
+		if b, err := g.fs.Exists(toolsFilePath); err != nil {
+			logrus.Errorf("check `%s` exists got error: %v", toolsFilePath, err)
+			if  g.generateGrpcGateway {
+				return err
+			}
+		} else if !b {
+			toolsSrc := jen.NewFile("tools")
+			toolsSrc.HeaderComment("// +build tools\n")
+			toolsSrc.Anon(
+				"github.com/grpc-ecosystem/grpc-gateway/v2/protoc-gen-grpc-gateway",
+				"github.com/grpc-ecosystem/grpc-gateway/v2/protoc-gen-openapiv2",
+				"google.golang.org/grpc/cmd/protoc-gen-go-grpc",
+				"google.golang.org/protobuf/cmd/protoc-gen-go",
+				"github.com/mwitkow/go-proto-validators/protoc-gen-govalidators",
+				"github.com/rakyll/statik",
+			)
+			if err := g.fs.WriteFile(toolsFilePath, toolsSrc.GoString(), true); err != nil {
+				logrus.Errorf("generate tools.go got err: %v", err)
+			}
+		}
 	}
 	cmdSvcImport, err := utils.GetCmdServiceImportPath(utils.ToLowerSnakeCase(g.name))
 	if err != nil {

@@ -12,8 +12,6 @@ import (
 	"github.com/kirinse/kit/utils"
 	"github.com/sirupsen/logrus"
 	"github.com/spf13/viper"
-	"os"
-	"os/exec"
 	"path"
 	"runtime"
 	"strings"
@@ -33,16 +31,18 @@ type GenerateTransport struct {
 	filePath         string
 	file             *parser.File
 	serviceInterface parser.Interface
+	generateGateway  bool
 }
 
 // NewGenerateTransport returns a transport generator.
-func NewGenerateTransport(name string, gorillaMux bool, transport, pbPath, pbImportPath string, methods []string) Gen {
+func NewGenerateTransport(name string, gorillaMux bool, transport, pbPath, pbImportPath string, methods []string, generateGateway bool) Gen {
 	i := &GenerateTransport{
-		name:          name,
-		gorillaMux:    gorillaMux,
-		interfaceName: utils.ToCamelCase(name + "Service"),
-		destPath:      fmt.Sprintf(viper.GetString("gk_service_path_format"), utils.ToLowerSnakeCase(name)),
-		methods:       methods,
+		name:            name,
+		gorillaMux:      gorillaMux,
+		interfaceName:   utils.ToCamelCase(name + "Service"),
+		destPath:        fmt.Sprintf(viper.GetString("gk_service_path_format"), utils.ToLowerSnakeCase(name)),
+		methods:         methods,
+		generateGateway: generateGateway,
 	}
 	i.filePath = path.Join(i.destPath, viper.GetString("gk_service_file_name"))
 	i.transport = transport
@@ -99,7 +99,7 @@ func (g *GenerateTransport) Generate() (err error) {
 			return err
 		}
 	case "grpc":
-		gp := newGenerateGRPCTransportProto(g.name, g.pbPath, g.serviceInterface, g.methods)
+		gp := newGenerateGRPCTransportProto(g.name, g.pbPath, g.serviceInterface, g.methods, g.generateGateway)
 		err = gp.Generate()
 		if err != nil {
 			return err
@@ -652,15 +652,17 @@ type generateGRPCTransportProto struct {
 	pbFilePath        string
 	compileFilePath   string
 	serviceInterface  parser.Interface
+	generateGateway   bool
 }
 
-func newGenerateGRPCTransportProto(name, pbPath string, serviceInterface parser.Interface, methods []string) Gen {
+func newGenerateGRPCTransportProto(name, pbPath string, serviceInterface parser.Interface, methods []string, generateGateway bool) Gen {
 	t := &generateGRPCTransportProto{
 		name:             name,
 		methods:          methods,
 		interfaceName:    utils.ToCamelCase(name + "Service"),
 		destPath:         fmt.Sprintf(viper.GetString("gk_grpc_pb_path_format"), utils.ToLowerSnakeCase(name)),
 		serviceInterface: serviceInterface,
+		generateGateway:  generateGateway,
 	}
 	if pbPath != "" {
 		t.destPath = path.Join(pbPath, "pb")
@@ -669,13 +671,21 @@ func newGenerateGRPCTransportProto(name, pbPath string, serviceInterface parser.
 		t.destPath,
 		fmt.Sprintf(viper.GetString("gk_grpc_pb_file_name"), utils.ToLowerSnakeCase(name)),
 	)
-	t.compileFilePath = path.Join(t.destPath, viper.GetString("gk_grpc_compile_file_name"))
-	//t.compileFilePath = path.Join(utils.ToLowerSnakeCase(name), viper.GetString("gk_grpc_compile_file_name"))
+	t.compileFilePath = path.Join(utils.ToLowerSnakeCase(name), viper.GetString("gk_grpc_compile_file_name"))
 	t.fs = fs.Get()
 	return t
 }
 func (g *generateGRPCTransportProto) Generate() (err error) {
-	g.CreateFolderStructure(g.destPath)
+	_ = g.CreateFolderStructure(g.destPath)
+	if g.generateGateway {
+		thirdPath := path.Join("third_party", "OpenAPI")
+		if viper.GetString("gk_folder") != "" {
+			thirdPath = path.Join(viper.GetString("gk_folder"), thirdPath)
+		} else {
+			thirdPath = path.Join(utils.ToLowerSnakeCase(g.name), thirdPath)
+		}
+		_ = g.CreateFolderStructure(thirdPath)
+	}
 	if b, err := g.fs.Exists(g.pbFilePath); err != nil {
 		return err
 	} else if !b {
@@ -705,6 +715,29 @@ func (g *generateGRPCTransportProto) Generate() (err error) {
 	if g.generateFirstTime {
 		g.getServiceRPC(svc)
 		grpcPath, _ := utils.GetGRPCTransportImportPath(g.name)
+		imports := []*proto.Import{
+			{
+				Filename: "google/protobuf/empty.proto",
+			},
+			{
+				Filename: "google/protobuf/timestamp.proto",
+			},
+			{
+				Filename: "google/protobuf/wrappers.proto",
+			},
+			{
+				Filename: "mwitkow/go-proto-validators/validator.proto",
+			},
+		}
+		if g.generateGateway {
+			imports = append(imports, &proto.Import{
+				Filename: "google/api/annotations.proto",
+			}, &proto.Import{
+				Filename: "protoc-gen-openapiv2/options/annotations.proto",
+			}, &proto.Import{
+				Filename: "google/api/field_behavior.proto",
+			})
+		}
 		g.protoSrc.Elements = append(
 			g.protoSrc.Elements,
 			&proto.Syntax{
@@ -713,14 +746,59 @@ func (g *generateGRPCTransportProto) Generate() (err error) {
 			&proto.Package{
 				Name: utils.ToLowerSnakeCase(g.name),
 			},
-			&proto.Option{
+		)
+		for _, imp := range imports {
+			g.protoSrc.Elements = append(g.protoSrc.Elements, imp)
+		}
+		opts := []*proto.Option{
+			{
 				Name: "go_package",
 				Constant: proto.Literal{
 					Source:   grpcPath + ";pb",
 					IsString: true,
 				},
-				IsEmbedded: true,
+				IsEmbedded: false,
 			},
+		}
+		if g.generateGateway {
+			opt := &proto.Option{
+				Name: "(grpc.gateway.protoc_gen_openapiv2.options.openapiv2_swagger)",
+				Constant: proto.Literal{
+					OrderedMap: proto.LiteralMap{
+						{
+							Name:        "info",
+							PrintsColon: true,
+							Literal: &proto.Literal{
+								OrderedMap: proto.LiteralMap{
+									{
+										Name:        "version",
+										PrintsColon: true,
+										Literal: &proto.Literal{
+											Source:   "1.0",
+											IsString: true,
+										},
+									},
+								},
+							},
+						},
+						{
+							Name:        "schemes",
+							PrintsColon: true,
+							Literal: &proto.Literal{
+								Source:   "HTTP",
+								IsString: false,
+							},
+						},
+					},
+				},
+			}
+			opts = append(opts, opt)
+		}
+		for _, opt := range opts {
+			g.protoSrc.Elements = append(g.protoSrc.Elements, opt)
+		}
+		g.protoSrc.Elements = append(
+			g.protoSrc.Elements,
 			svc,
 		)
 	} else {
@@ -733,7 +811,7 @@ func (g *generateGRPCTransportProto) Generate() (err error) {
 	}
 	g.generateRequestResponse()
 	buf := new(bytes.Buffer)
-	formatter := protofmt.NewFormatter(buf, " ")
+	formatter := protofmt.NewFormatter(buf, "  ")
 	formatter.Format(g.protoSrc)
 	err = g.fs.WriteFile(g.pbFilePath, buf.String(), true)
 	if err != nil {
@@ -742,15 +820,21 @@ func (g *generateGRPCTransportProto) Generate() (err error) {
 	if viper.GetString("gk_folder") != "" {
 		g.pbFilePath = path.Join(viper.GetString("gk_folder"), g.pbFilePath)
 	}
-	if !viper.GetBool("gk_testing") {
-		cmd := exec.Command("protoc", g.pbFilePath, "--go_out=plugins=grpc,paths=source_relative:.")
-		cmd.Stdout = os.Stdout
-
-		err = cmd.Run()
-		if err != nil {
-			return err
-		}
-	}
+	//if !viper.GetBool("gk_testing") {
+	//	cmd := exec.Command(
+	//		"protoc",
+	//		//"-I vendor/",
+	//		g.pbFilePath,
+	//		"--go_out=plugins=grpc,paths=source_relative:.",
+	//		//"--gogofaster_out=plugins=grpc,paths=source_relative:.",
+	//		//"--grpc-gateway_out=allow_patch_feature=false,paths=source_relative,allow_delete_body=true:.",
+	//	)
+	//	cmd.Stdout = os.Stdout
+	//	err = cmd.Run()
+	//	if err != nil {
+	//		return err
+	//	}
+	//}
 	if b, e := g.fs.Exists(g.compileFilePath); e != nil {
 		return e
 	} else if b {
@@ -769,52 +853,190 @@ func (g *generateGRPCTransportProto) Generate() (err error) {
 :: See also
 ::  https://github.com/grpc/grpc-go/tree/master/examples
 
-protoc %s.proto --go_out=plugins=grpc,paths=source_relative:.`, g.name),
+protoc \
+    -I pkg/grpc/pb \
+    -I vendor/github.com/grpc-ecosystem/grpc-gateway/ \
+    -I vendor/github.com/gogo/googleapis/ \
+    -I vendor/ \
+    --gogofaster_out=plugins=grpc,paths=source_relative,\
+Mgoogle/protobuf/timestamp.proto=github.com/gogo/protobuf/types,\
+Mgoogle/protobuf/duration.proto=github.com/gogo/protobuf/types,\
+Mgoogle/protobuf/empty.proto=github.com/gogo/protobuf/types,\
+Mgoogle/api/annotations.proto=github.com/gogo/googleapis/google/api,\
+Mgoogle/protobuf/field_mask.proto=github.com/gogo/protobuf/types:\
+pkg/grpc/pb/ \
+    --grpc-gateway_out=allow_patch_feature=false,paths=source_relative,allow_delete_body=true,\
+Mgoogle/protobuf/timestamp.proto=github.com/gogo/protobuf/types,\
+Mgoogle/protobuf/duration.proto=github.com/gogo/protobuf/types,\
+Mgoogle/protobuf/empty.proto=github.com/gogo/protobuf/types,\
+Mgoogle/api/annotations.proto=github.com/gogo/googleapis/google/api,\
+Mgoogle/protobuf/field_mask.proto=github.com/gogo/protobuf/types:\
+pkg/grpc/pb/ \
+    --swagger_out=allow_delete_body=true:third_party/OpenAPI/ \
+    --govalidators_out=gogoimport=true,paths=source_relative,\
+Mgoogle/protobuf/timestamp.proto=github.com/gogo/protobuf/types,\
+Mgoogle/protobuf/duration.proto=github.com/gogo/protobuf/types,\
+Mgoogle/protobuf/empty.proto=github.com/gogo/protobuf/types,\
+Mgoogle/api/annotations.proto=github.com/gogo/googleapis/google/api,\
+Mgoogle/protobuf/field_mask.proto=github.com/gogo/protobuf/types:\
+pkg/grpc/pb/ \
+    pkg/grpc/pb/%s.proto`, g.name),
 			false,
 		)
 	}
 	if runtime.GOOS == "darwin" {
-		return g.fs.WriteFile(
+		if err := g.fs.WriteFile(
 			g.compileFilePath,
-			fmt.Sprintf(`#!/usr/bin/env sh
+			fmt.Sprintf(`# Generate gogo, gRPC-Gateway, swagger, go-validators output.
+	#
+	# -I declares import folders, in order of importance
+	# This is how proto resolves the protofile imports.
+	# It will check for the protofile relative to each of these
+	# folders and use the first one it finds.
+	#
+	# --go_out generates Go Protobuf output.
+	# --go-grpc_out generates Go-Grpc output.
+	# --gogo_out generates GoGo Protobuf output with gRPC plugin enabled.
+	# --grpc-gateway_out generates gRPC-Gateway output.
+	# --swagger_out generates an OpenAPI 2.0 specification for our gRPC-Gateway endpoints.
+	# --govalidators_out generates Go validation files for our messages types, if specified.
+	#
+	# The lines starting with Mgoogle/... are proto import replacements,
+	# which cause the generated file to import the specified packages
+	# instead of the go_package's declared by the imported protof files.
+	#
+	# pkg/grpc/pb is the output directory.
+	#
+	# proto/example.proto is the location of the protofile we use.
+gen:
+	protoc \
+	    -I pkg/grpc/pb \
+	    -I vendor/github.com/grpc-ecosystem/grpc-gateway/v2/ \
+	    -I ${GOPATH}/src/github.com/googleapis/ \
+	    -I vendor/github.com/ \
+	    --go_out=paths=source_relative,\
+Mgoogle/protobuf/timestamp.proto=github.com/golang/protobuf/ptypes/timestamp,\
+Mgoogle/protobuf/duration.proto=github.com/golang/protobuf/ptypes/duration,\
+Mgoogle/protobuf/empty.proto=github.com/golang/protobuf/ptypes/empty,\
+Mgoogle/api/annotations.proto=google.golang.org/genproto/googleapis/api/annotations,\
+Mgoogle/api/httpbody.proto=google.golang.org/genproto/googleapis/api/httpbody,\
+Mgoogle/api/field_behavior.proto=google.golang.org/genproto/googleapis/api/annotations,\
+Mgoogle/protobuf/field_mask.proto=google.golang.org/genproto/protobuf/field_mask:\
+./pkg/grpc/pb/ \
+	    --go-grpc_out=paths=source_relative,\
+Mgoogle/protobuf/timestamp.proto=github.com/golang/protobuf/ptypes/timestamp,\
+Mgoogle/protobuf/duration.proto=github.com/golang/protobuf/ptypes/duration,\
+Mgoogle/protobuf/empty.proto=github.com/golang/protobuf/ptypes/empty,\
+Mgoogle/api/annotations.proto=google.golang.org/genproto/googleapis/api/annotations,\
+Mgoogle/api/httpbody.proto=google.golang.org/genproto/googleapis/api/httpbody,\
+Mgoogle/api/field_behavior.proto=google.golang.org/genproto/googleapis/api/annotations,\
+Mgoogle/protobuf/field_mask.proto=google.golang.org/genproto/protobuf/field_mask:\
+./pkg/grpc/pb/ \
+	    --grpc-gateway_out=logtostderr=true,allow_patch_feature=true,paths=source_relative,allow_delete_body=true,\
+Mgoogle/protobuf/timestamp.proto=github.com/golang/protobuf/ptypes/timestamp,\
+Mgoogle/protobuf/duration.proto=github.com/golang/protobuf/ptypes/duration,\
+Mgoogle/protobuf/empty.proto=github.com/golang/protobuf/ptypes/empty,\
+Mgoogle/api/annotations.proto=google.golang.org/genproto/googleapis/api/annotations,\
+Mgoogle/api/httpbody.proto=google.golang.org/genproto/googleapis/api/httpbody,\
+Mgoogle/api/field_behavior.proto=google.golang.org/genproto/googleapis/api/annotations,\
+Mgoogle/protobuf/field_mask.proto=google.golang.org/genproto/protobuf/field_mask:\
+./pkg/grpc/pb/ \
+	    --openapiv2_out=logtostderr=true,json_names_for_fields=false,allow_delete_body=true:third_party/OpenAPI/ \
+	    --govalidators_out=paths=source_relative,\
+Mgoogle/protobuf/timestamp.proto=github.com/golang/protobuf/ptypes/timestamp,\
+Mgoogle/protobuf/duration.proto=github.com/golang/protobuf/ptypes/duration,\
+Mgoogle/protobuf/empty.proto=github.com/golang/protobuf/ptypes/empty,\
+Mgoogle/api/annotations.proto=google.golang.org/genproto/googleapis/api/annotations,\
+Mgoogle/api/httpbody.proto=google.golang.org/genproto/googleapis/api/httpbody,\
+Mgoogle/api/field_behavior.proto=google.golang.org/genproto/googleapis/api/annotations,\
+Mgoogle/protobuf/field_mask.proto=google.golang.org/genproto/protobuf/field_mask:\
+./pkg/grpc/pb/ \
+	    ./pkg/grpc/pb/%s.proto
 
-# Install proto3 from source macOS only.
-#  brew install autoconf automake libtool
-#  git clone https://github.com/google/protobuf
-#  ./autogen.sh ; ./configure ; make ; make install
-#
-# Update protoc Go bindings via
-#  go get -u github.com/golang/protobuf/{proto,protoc-gen-go}
-#
-# See also
-#  https://github.com/grpc/grpc-go/tree/master/examples
+	# Generate static assets for OpenAPI UI & %s.swagger.json
+	statik -m -f -src third_party/OpenAPI/ -ns openapi
 
-protoc %s.proto --go_out=plugins=grpc,paths=source_relative:.`, g.name),
+	protoc-go-inject-tag -input=./pkg/grpc/pb/%s.pb.go
+
+#### 安装必需工具包 (tools.go) ####
+install:
+	go mod tidy
+	go mod vendor
+`, g.name, g.name, g.name),
 			false,
-		)
+		); err != nil {
+			return err
+		}
+		return nil
+		//cmd := exec.Command(
+		//	"make",
+		//	"-C",
+		//	utils.ToLowerSnakeCase(g.name),
+		//	"gen",
+		//)
+		//cmd.Stdout = os.Stdout
+		//fmt.Println("====> cmd:", cmd)
+		//return cmd.Run()
 	}
 	return g.fs.WriteFile(
 		g.compileFilePath,
-		fmt.Sprintf(`#!/usr/bin/env sh
+		fmt.Sprintf(`# Generate gogo, gRPC-Gateway, swagger, go-validators output.
+	#
+	# -I declares import folders, in order of importance
+	# This is how proto resolves the protofile imports.
+	# It will check for the protofile relative to each of these
+	# folders and use the first one it finds.
+	#
+	# --gogo_out generates GoGo Protobuf output with gRPC plugin enabled.
+	# --grpc-gateway_out generates gRPC-Gateway output.
+	# --swagger_out generates an OpenAPI 2.0 specification for our gRPC-Gateway endpoints.
+	# --govalidators_out generates Go validation files for our messages types, if specified.
+	#
+	# The lines starting with Mgoogle/... are proto import replacements,
+	# which cause the generated file to import the specified packages
+	# instead of the go_package's declared by the imported protof files.
+	#
+	# ./proto is the output directory.
+	#
+	# proto/example.proto is the location of the protofile we use.
+gen:
+	protoc \
+	    -I pkg/grpc/pb \
+	    -I vendor/github.com/grpc-ecosystem/grpc-gateway/ \
+	    -I vendor/github.com/gogo/googleapis/ \
+	    -I vendor/ \
+	    --gogofaster_out=plugins=grpc,paths=source_relative,\
+Mgoogle/protobuf/timestamp.proto=github.com/gogo/protobuf/types,\
+Mgoogle/protobuf/duration.proto=github.com/gogo/protobuf/types,\
+Mgoogle/protobuf/empty.proto=github.com/gogo/protobuf/types,\
+Mgoogle/api/annotations.proto=github.com/gogo/googleapis/google/api,\
+Mgoogle/protobuf/field_mask.proto=github.com/gogo/protobuf/types:\
+pkg/grpc/pb/ \
+	    --grpc-gateway_out=allow_patch_feature=false,paths=source_relative,allow_delete_body=true,\
+Mgoogle/protobuf/timestamp.proto=github.com/gogo/protobuf/types,\
+Mgoogle/protobuf/duration.proto=github.com/gogo/protobuf/types,\
+Mgoogle/protobuf/empty.proto=github.com/gogo/protobuf/types,\
+Mgoogle/api/annotations.proto=github.com/gogo/googleapis/google/api,\
+Mgoogle/protobuf/field_mask.proto=github.com/gogo/protobuf/types:\
+pkg/grpc/pb/ \
+	    --swagger_out=allow_delete_body=true:third_party/OpenAPI/ \
+	    --govalidators_out=gogoimport=true,paths=source_relative,\
+Mgoogle/protobuf/timestamp.proto=github.com/gogo/protobuf/types,\
+Mgoogle/protobuf/duration.proto=github.com/gogo/protobuf/types,\
+Mgoogle/protobuf/empty.proto=github.com/gogo/protobuf/types,\
+Mgoogle/api/annotations.proto=github.com/gogo/googleapis/google/api,\
+Mgoogle/protobuf/field_mask.proto=github.com/gogo/protobuf/types:\
+pkg/grpc/pb/ \
+	    pkg/grpc/pb/%s.proto
 
-# Install proto3
-# sudo apt-get install -y git autoconf automake libtool curl make g++ unzip
-# git clone https://github.com/google/protobuf.git
-# cd protobuf/
-# ./autogen.sh
-# ./configure
-# make
-# make check
-# sudo make install
-# sudo ldconfig # refresh shared library cache.
-#
-# Update protoc Go bindings via
-#  go get -u github.com/golang/protobuf/{proto,protoc-gen-go}
-#
-# See also
-#  https://github.com/grpc/grpc-go/tree/master/examples
+	# Workaround for https://github.com/grpc-ecosystem/grpc-gateway/issues/229.
+	[ -f ./pkg/grpc/pb/%s.pb.gw.go ] && sed -i.bak "s/empty.Empty/types.Empty/g" pkg/grpc/pb/%s.pb.gw.go && rm pkg/grpc/pb/%s.pb.gw.go.bak
 
-protoc %s.proto --go_out=plugins=grpc,paths=source_relative:.`, g.name),
+	# Generate static assets for OpenAPI UI
+	statik -m -f -src third_party/OpenAPI/
+
+	protoc-go-inject-tag -input=./pkg/grpc/pb/%s.pb.go
+`, g.name, g.name, g.name, g.name, g.name),
 		false,
 	)
 }
@@ -872,6 +1094,23 @@ func (g *generateGRPCTransportProto) getServiceRPC(svc *proto.Service) {
 				Name:        v.Name,
 				ReturnsType: v.Name + "Reply",
 				RequestType: v.Name + "Request",
+				Elements: []proto.Visitee{
+					&proto.Option{
+						Name: "(google.api.http)",
+						Constant: proto.Literal{
+							OrderedMap: proto.LiteralMap{
+								{
+									Name:        "get",
+									PrintsColon: true,
+									Literal: &proto.Literal{
+										Source:   "/api/v1/"+utils.ToLowerSnakeCase(v.Name),
+										IsString: true,
+									},
+								},
+							},
+						},
+					},
+				},
 			},
 		)
 	}

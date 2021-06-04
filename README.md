@@ -1,4 +1,4 @@
-# GoKit CLI  [![Build Status](https://travis-ci.org/kujtimiihoxha/kit.svg?branch=master)](https://travis-ci.org/kujtimiihoxha/kit)[![Go Report Card](https://goreportcard.com/badge/github.com/kirinse/kit)](https://goreportcard.com/report/github.com/kirinse/kit)[![Coverage Status](https://coveralls.io/repos/github/kirinse/kit/badge.svg?branch=master)](https://coveralls.io/github/kirinse/kit?branch=master)
+# GoKit CLI
 I fork the project from [kit](https://github.com/kujtimiihoxha/kit) and plan to maintain it in the future. The kit tool is a great job, and deeply used in our team. Some features and bugs have been done and fixed, such as supporting go module,replacing some old dependencies and so on. I am very glad to receive recommend about it.  
 
 This project is a more advanced version of [gk](https://github.com/kujtimiihoxha/gk).
@@ -139,3 +139,15 @@ docker-compose up
 
 After you run `docker-compose up` your services will start up and any change you make to your code will automatically
  rebuild and restart your service (only the service that is changed)
+
+```
+kit n s xxx -m github.com/kirinse/xxx
+cd xxx
+edit pkg/service/service.go to define service methods
+cd ../
+kit g s xxx[ -t grpc][ -r(repository)][ --dmw][ -g(grpc-gateway)]
+kit g s xxx[ --gorilla][ -r][ --dmw]
+```
+
+ - if -t grpc, then register grpc service to consul
+ - if -t grpc -g then register http & grpc service to consul
