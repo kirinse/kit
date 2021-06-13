@@ -914,49 +914,17 @@ gen:
 	    -I pkg/grpc/pb \
 	    -I ${GOPATH}/src/github.com/grpc-ecosystem/grpc-gateway/ \
 	    -I ${GOPATH}/src/github.com/googleapis/ \
-	    --go_out=paths=source_relative,\
-Mgoogle/protobuf/timestamp.proto=github.com/golang/protobuf/ptypes/timestamp,\
-Mgoogle/protobuf/duration.proto=github.com/golang/protobuf/ptypes/duration,\
-Mgoogle/protobuf/empty.proto=github.com/golang/protobuf/ptypes/empty,\
-Mgoogle/api/annotations.proto=google.golang.org/genproto/googleapis/api/annotations,\
-Mgoogle/api/httpbody.proto=google.golang.org/genproto/googleapis/api/httpbody,\
-Mgoogle/api/field_behavior.proto=google.golang.org/genproto/googleapis/api/annotations,\
-Mgoogle/protobuf/field_mask.proto=google.golang.org/genproto/protobuf/field_mask:\
-./pkg/grpc/pb/ \
-	    --go-grpc_out=paths=source_relative,\
-Mgoogle/protobuf/timestamp.proto=github.com/golang/protobuf/ptypes/timestamp,\
-Mgoogle/protobuf/duration.proto=github.com/golang/protobuf/ptypes/duration,\
-Mgoogle/protobuf/empty.proto=github.com/golang/protobuf/ptypes/empty,\
-Mgoogle/api/annotations.proto=google.golang.org/genproto/googleapis/api/annotations,\
-Mgoogle/api/httpbody.proto=google.golang.org/genproto/googleapis/api/httpbody,\
-Mgoogle/api/field_behavior.proto=google.golang.org/genproto/googleapis/api/annotations,\
-Mgoogle/protobuf/field_mask.proto=google.golang.org/genproto/protobuf/field_mask:\
-./pkg/grpc/pb/ \
-	    --grpc-gateway_out=logtostderr=true,allow_patch_feature=true,paths=source_relative,allow_delete_body=true,\
-Mgoogle/protobuf/timestamp.proto=github.com/golang/protobuf/ptypes/timestamp,\
-Mgoogle/protobuf/duration.proto=github.com/golang/protobuf/ptypes/duration,\
-Mgoogle/protobuf/empty.proto=github.com/golang/protobuf/ptypes/empty,\
-Mgoogle/api/annotations.proto=google.golang.org/genproto/googleapis/api/annotations,\
-Mgoogle/api/httpbody.proto=google.golang.org/genproto/googleapis/api/httpbody,\
-Mgoogle/api/field_behavior.proto=google.golang.org/genproto/googleapis/api/annotations,\
-Mgoogle/protobuf/field_mask.proto=google.golang.org/genproto/protobuf/field_mask:\
-./pkg/grpc/pb/ \
+	    --go_out=paths=source_relative:./pkg/grpc/pb/ \
+	    --go-grpc_out=paths=source_relative:./pkg/grpc/pb/ \
+	    --grpc-gateway_out=logtostderr=true,allow_patch_feature=true,paths=source_relative,allow_delete_body=true:./pkg/grpc/pb/ \
 	    --openapiv2_out=logtostderr=true,json_names_for_fields=false,allow_delete_body=true:third_party/OpenAPI/ \
-	    --govalidators_out=paths=source_relative,\
-Mgoogle/protobuf/timestamp.proto=github.com/golang/protobuf/ptypes/timestamp,\
-Mgoogle/protobuf/duration.proto=github.com/golang/protobuf/ptypes/duration,\
-Mgoogle/protobuf/empty.proto=github.com/golang/protobuf/ptypes/empty,\
-Mgoogle/api/annotations.proto=google.golang.org/genproto/googleapis/api/annotations,\
-Mgoogle/api/httpbody.proto=google.golang.org/genproto/googleapis/api/httpbody,\
-Mgoogle/api/field_behavior.proto=google.golang.org/genproto/googleapis/api/annotations,\
-Mgoogle/protobuf/field_mask.proto=google.golang.org/genproto/protobuf/field_mask:\
-./pkg/grpc/pb/ \
+	    --govalidators_out=paths=source_relative:./pkg/grpc/pb/ \
 	    ./pkg/grpc/pb/%s.proto
 
 	# Generate static assets for OpenAPI UI & %s.swagger.json
 	statik -m -f -src third_party/OpenAPI/ -ns openapi
 
-	protoc-go-inject-tag -input=./pkg/grpc/pb/%s.pb.go
+	# protoc-go-inject-tag -input=./pkg/grpc/pb/%s.pb.go
 
 #### 安装必需工具包 (tools.go) ####
 .PHONY: install
