@@ -2392,7 +2392,7 @@ func (g *generateCmd) generateCmdMain() error {
 		toolsFilePath := path.Join(utils.ToLowerSnakeCase(g.name), "tools.go")
 		if b, err := g.fs.Exists(toolsFilePath); err != nil {
 			logrus.Errorf("check `%s` exists got error: %v", toolsFilePath, err)
-			if  g.generateGrpcGateway {
+			if g.generateGrpcGateway {
 				return err
 			}
 		} else if !b {
@@ -2416,6 +2416,7 @@ func (g *generateCmd) generateCmdMain() error {
 		return err
 	}
 	src := jen.NewFile("main")
+	src.Anon("go.uber.org/automaxprocs")
 	src.Func().Id("main").Params().Block(
 		jen.Qual(cmdSvcImport, "Run").Call(),
 	)

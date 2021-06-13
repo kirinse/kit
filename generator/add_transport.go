@@ -908,12 +908,12 @@ pkg/grpc/pb/ \
 	# pkg/grpc/pb is the output directory.
 	#
 	# proto/example.proto is the location of the protofile we use.
+.PHONY: gen
 gen:
 	protoc \
 	    -I pkg/grpc/pb \
-	    -I vendor/github.com/grpc-ecosystem/grpc-gateway/v2/ \
+	    -I ${GOPATH}/src/github.com/grpc-ecosystem/grpc-gateway/ \
 	    -I ${GOPATH}/src/github.com/googleapis/ \
-	    -I vendor/github.com/ \
 	    --go_out=paths=source_relative,\
 Mgoogle/protobuf/timestamp.proto=github.com/golang/protobuf/ptypes/timestamp,\
 Mgoogle/protobuf/duration.proto=github.com/golang/protobuf/ptypes/duration,\
@@ -959,6 +959,7 @@ Mgoogle/protobuf/field_mask.proto=google.golang.org/genproto/protobuf/field_mask
 	protoc-go-inject-tag -input=./pkg/grpc/pb/%s.pb.go
 
 #### 安装必需工具包 (tools.go) ####
+.PHONY: install
 install:
 	go mod tidy
 	go mod vendor
@@ -1103,7 +1104,7 @@ func (g *generateGRPCTransportProto) getServiceRPC(svc *proto.Service) {
 									Name:        "get",
 									PrintsColon: true,
 									Literal: &proto.Literal{
-										Source:   "/api/v1/"+utils.ToLowerSnakeCase(v.Name),
+										Source:   "/api/v1/" + utils.ToLowerSnakeCase(v.Name),
 										IsString: true,
 									},
 								},
@@ -1201,6 +1202,7 @@ func (g *generateGRPCTransportBase) Generate() (err error) {
 			fields = append(fields, jen.Id(n).Qual("github.com/go-kit/kit/transport/grpc", "Handler"))
 		}
 	}
+	fields = append(fields, jen.Id("*pb.Unimplemented"+utils.ToCamelCase(g.name)+"Server"))
 	g.code.appendStruct("grpcServer", fields...)
 	g.code.NewLine()
 	g.code.appendMultilineComment([]string{
