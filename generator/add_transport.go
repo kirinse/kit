@@ -32,10 +32,11 @@ type GenerateTransport struct {
 	file             *parser.File
 	serviceInterface parser.Interface
 	generateGateway  bool
+	generateGorm     bool
 }
 
 // NewGenerateTransport returns a transport generator.
-func NewGenerateTransport(name string, gorillaMux bool, transport, pbPath, pbImportPath string, methods []string, generateGateway bool) Gen {
+func NewGenerateTransport(name string, gorillaMux bool, transport, pbPath, pbImportPath string, methods []string, generateGateway, generateGorm bool) Gen {
 	i := &GenerateTransport{
 		name:            name,
 		gorillaMux:      gorillaMux,
@@ -43,6 +44,7 @@ func NewGenerateTransport(name string, gorillaMux bool, transport, pbPath, pbImp
 		destPath:        fmt.Sprintf(viper.GetString("gk_service_path_format"), utils.ToLowerSnakeCase(name)),
 		methods:         methods,
 		generateGateway: generateGateway,
+		generateGorm:    generateGorm,
 	}
 	i.filePath = path.Join(i.destPath, viper.GetString("gk_service_file_name"))
 	i.transport = transport
@@ -88,7 +90,7 @@ func (g *GenerateTransport) Generate() (err error) {
 	}
 	switch g.transport {
 	case "http":
-		tG := newGenerateHTTPTransport(g.name, g.gorillaMux, g.serviceInterface, g.methods)
+		tG := newGenerateHTTPTransport(g.name, g.gorillaMux, g.serviceInterface, g.methods, g.generateGorm)
 		err = tG.Generate()
 		if err != nil {
 			return err
@@ -99,7 +101,7 @@ func (g *GenerateTransport) Generate() (err error) {
 			return err
 		}
 	case "grpc":
-		gp := newGenerateGRPCTransportProto(g.name, g.pbPath, g.serviceInterface, g.methods, g.generateGateway)
+		gp := newGenerateGRPCTransportProto(g.name, g.pbPath, g.serviceInterface, g.methods, g.generateGateway, g.generateGorm)
 		err = gp.Generate()
 		if err != nil {
 			return err
@@ -182,17 +184,17 @@ func (g *GenerateTransport) removeUnwantedMethods() {
 
 type generateHTTPTransport struct {
 	BaseGenerator
-	name                          string
-	methods                       []string
-	interfaceName                 string
-	destPath                      string
-	generateFirstTime, gorillaMux bool
-	file                          *parser.File
-	filePath                      string
-	serviceInterface              parser.Interface
+	name                                        string
+	methods                                     []string
+	interfaceName                               string
+	destPath                                    string
+	generateFirstTime, gorillaMux, generateGorm bool
+	file                                        *parser.File
+	filePath                                    string
+	serviceInterface                            parser.Interface
 }
 
-func newGenerateHTTPTransport(name string, gorillaMux bool, serviceInterface parser.Interface, methods []string) Gen {
+func newGenerateHTTPTransport(name string, gorillaMux bool, serviceInterface parser.Interface, methods []string, generateGorm bool) Gen {
 	t := &generateHTTPTransport{
 		name:             name,
 		methods:          methods,
@@ -200,6 +202,7 @@ func newGenerateHTTPTransport(name string, gorillaMux bool, serviceInterface par
 		destPath:         fmt.Sprintf(viper.GetString("gk_http_path_format"), utils.ToLowerSnakeCase(name)),
 		serviceInterface: serviceInterface,
 		gorillaMux:       gorillaMux,
+		generateGorm:     generateGorm,
 	}
 	t.filePath = path.Join(t.destPath, viper.GetString("gk_http_file_name"))
 	t.srcFile = jen.NewFilePath(t.destPath)
@@ -653,9 +656,10 @@ type generateGRPCTransportProto struct {
 	compileFilePath   string
 	serviceInterface  parser.Interface
 	generateGateway   bool
+	generateGorm      bool
 }
 
-func newGenerateGRPCTransportProto(name, pbPath string, serviceInterface parser.Interface, methods []string, generateGateway bool) Gen {
+func newGenerateGRPCTransportProto(name, pbPath string, serviceInterface parser.Interface, methods []string, generateGateway bool, generateGorm bool) Gen {
 	t := &generateGRPCTransportProto{
 		name:             name,
 		methods:          methods,
@@ -663,6 +667,7 @@ func newGenerateGRPCTransportProto(name, pbPath string, serviceInterface parser.
 		destPath:         fmt.Sprintf(viper.GetString("gk_grpc_pb_path_format"), utils.ToLowerSnakeCase(name)),
 		serviceInterface: serviceInterface,
 		generateGateway:  generateGateway,
+		generateGorm:     generateGorm,
 	}
 	if pbPath != "" {
 		t.destPath = path.Join(pbPath, "pb")
@@ -726,8 +731,15 @@ func (g *generateGRPCTransportProto) Generate() (err error) {
 				Filename: "google/protobuf/wrappers.proto",
 			},
 			{
-				Filename: "mwitkow/go-proto-validators/validator.proto",
+				Filename: "validate/validate.proto",
 			},
+		}
+		if g.generateGorm {
+			imports = append(imports, &proto.Import{
+				Filename: "protoc-gen-gorm/options/gorm.proto",
+			}, &proto.Import{
+				Filename: "protoc-gen-gorm/types/types.proto",
+			})
 		}
 		if g.generateGateway {
 			imports = append(imports, &proto.Import{
@@ -898,40 +910,42 @@ pkg/grpc/pb/ \
 	# --go-grpc_out generates Go-Grpc output.
 	# --gogo_out generates GoGo Protobuf output with gRPC plugin enabled.
 	# --grpc-gateway_out generates gRPC-Gateway output.
-	# --swagger_out generates an OpenAPI 2.0 specification for our gRPC-Gateway endpoints.
-	# --govalidators_out generates Go validation files for our messages types, if specified.
+	# --openapiv2_out generates an OpenAPI 2.0 specification for our gRPC-Gateway endpoints.
+	# --validate_out generates Go validation files for our messages types, if specified.
 	#
 	# The lines starting with Mgoogle/... are proto import replacements,
 	# which cause the generated file to import the specified packages
 	# instead of the go_package's declared by the imported protof files.
 	#
 	# pkg/grpc/pb is the output directory.
-	#
-	# proto/example.proto is the location of the protofile we use.
 .PHONY: gen
 gen:
 	protoc \
 	    -I pkg/grpc/pb \
 	    -I ${GOPATH}/src/github.com/grpc-ecosystem/grpc-gateway/ \
 	    -I ${GOPATH}/src/github.com/googleapis/ \
+	    -I ${GOPATH}/src/github.com/ \
+	    -I ~/Projects/GO/protos/ \
+	    -I ~/Projects/GO/atlas-app-toolkit/ \
+	    -I ~/Projects/GO/protoc-gen-validate/ \
+	    -I ~/Projects/GO/ \
 	    --go_out=paths=source_relative:./pkg/grpc/pb/ \
 	    --go-grpc_out=paths=source_relative:./pkg/grpc/pb/ \
+		--gorm_out=paths=source_relative,enums=false,defaultHandlers=false:pkg/grpc/pb/ \
 	    --grpc-gateway_out=logtostderr=true,allow_patch_feature=true,paths=source_relative,allow_delete_body=true:./pkg/grpc/pb/ \
 	    --openapiv2_out=logtostderr=true,json_names_for_fields=false,allow_delete_body=true:third_party/OpenAPI/ \
-	    --govalidators_out=paths=source_relative:./pkg/grpc/pb/ \
+		--validate_out=paths=source_relative,lang=go:./pkg/grpc/pb/ \
 	    ./pkg/grpc/pb/%s.proto
 
 	# Generate static assets for OpenAPI UI & %s.swagger.json
 	statik -m -f -src third_party/OpenAPI/ -ns openapi
-
-	# protoc-go-inject-tag -input=./pkg/grpc/pb/%s.pb.go
 
 #### 安装必需工具包 (tools.go) ####
 .PHONY: install
 install:
 	go mod tidy
 	go mod vendor
-`, g.name, g.name, g.name),
+`, g.name, g.name),
 			false,
 		); err != nil {
 			return err

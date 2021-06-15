@@ -119,7 +119,7 @@ func (g *GenerateService) Generate() (err error) {
 	if err != nil {
 		return err
 	}
-	tp := NewGenerateTransport(g.name, g.gorillaMux, g.transport, g.pbPath, g.pbImportPath, g.methods, g.generateGrpcGateway)
+	tp := NewGenerateTransport(g.name, g.gorillaMux, g.transport, g.pbPath, g.pbImportPath, g.methods, g.generateGrpcGateway, g.repository)
 	err = tp.Generate()
 	if err != nil {
 		return err
@@ -194,7 +194,18 @@ func (g *GenerateService) generateServiceStruct() {
 			return
 		}
 	}
-	g.pg.appendStruct(g.serviceStructName)
+	fields := []jen.Code{
+		jen.Id("logger").Qual("github.com/go-kit/kit/log", "Logger"),
+	}
+	if g.repository {
+		repoImportPath, err := utils.GetRepositoryImportPath(g.name)
+		if err != nil {
+			logrus.Errorf("get repository import path for `%s` error: %v.", g.name, err)
+			return
+		}
+		fields = append(fields, jen.Id("repo").Id("*").Qual(repoImportPath, "R"))
+	}
+	g.pg.appendStruct(g.serviceStructName, fields...)
 }
 func (g *GenerateService) generateNewMethod() {
 	for _, v := range g.file.Methods {
@@ -208,22 +219,39 @@ func (g *GenerateService) generateNewMethod() {
 		g.interfaceName,
 	).Line()
 	//fn := fmt.Sprintf("New%s", utils.ToCamelCase(g.serviceStructName))
+	newStructBody := jen.Dict{
+		jen.Id("logger"): jen.Id("log").Dot("WithPrefix").Call(jen.Id("logger"), jen.Lit("component"), jen.Lit("service")),
+	}
+	if g.repository {
+		newStructBody[jen.Id("repo")] = jen.Id("repo")
+	}
 	body := []jen.Code{
 		//jen.Var().Id("svc").Id(g.interfaceName).Op("=").Id(fn).Call(),
-		jen.Var().Id("svc").Id(g.interfaceName).Op("=").Id(fmt.Sprintf("&%s{}", g.serviceStructName)).Line(),
+		jen.Var().Id("svc").Id(g.interfaceName).Op("=").Id(fmt.Sprintf("&%s{", g.serviceStructName)),
+		newStructBody,
+		jen.Id("}").Line(),
 		jen.For(
-			jen.List(jen.Id("_"), jen.Id("m")).Op(":=").Range().Id("middleware"),
+			jen.List(
+				jen.Id("_"),
+				jen.Id("m"),
+			).Op(":=").Range().Id("middleware"),
 		).Block(
 			jen.Id("svc").Op("=").Id("m").Call(jen.Id("svc")),
 		),
 		jen.Return(jen.Id("svc")),
 	}
+	parameters := []jen.Code{
+		jen.Id("middleware").Id("[]Middleware"),
+		jen.Id("logger").Qual("github.com/go-kit/kit/log", "Logger"),
+	};
+	if g.repository {
+		repoImportPath, _ := utils.GetRepositoryImportPath(g.name)
+		parameters = append(parameters, jen.Id("repo").Id("*").Qual(repoImportPath, "R"))
+	}
 	g.pg.appendFunction(
 		"New",
 		nil,
-		[]jen.Code{
-			jen.Id("middleware").Id("[]Middleware"),
-		},
+		parameters,
 		[]jen.Code{},
 		g.interfaceName,
 		body...)
@@ -1841,8 +1869,15 @@ func (g *generateCmd) generateRun() (*PartialGenerator, error) {
 		).Line()
 		pg.Raw().Comment("// TODO: svc.New(..., repo)").Line()
 	}
-	pg.Raw().Id("svc").Op(":=").Qual(svcImport, "New").Call(
+	params := []jen.Code{
 		jen.Id("getServiceMiddleware").Call(jen.Id("kitLogger")),
+		jen.Id("kitLogger"),
+	}
+	if g.generateRepository {
+		params = append(params, jen.Id("repo"))
+	}
+	pg.Raw().Id("svc").Op(":=").Qual(svcImport, "New").Call(
+		params...
 	).Line()
 	pg.Raw().Id("eps").Op(":=").Qual(epImport, "New").Call(
 		jen.Id("svc"),
@@ -1862,6 +1897,9 @@ func (g *generateCmd) generateRun() (*PartialGenerator, error) {
 			jen.Id("g"),
 			jen.Id("*grpcAddr"),
 			jen.Id("*httpAddr"),
+			jen.Id("*consulAddr"),
+			jen.Id("SVC_NAME"),
+			jen.Nil(),
 			jen.Qual("github.com/go-kit/kit/log", "WithPrefix").Call(jen.Id("kitLogger"), jen.Lit("component"), jen.Lit("gateway")),
 			jen.Qual(pbImport, fmt.Sprintf("Register%sHandler", utils.ToCamelCase(g.name))),
 			jen.Lit("openapi"),
@@ -1995,7 +2033,7 @@ func (g *generateCmd) generateInitHTTP() (err error) {
 		jen.Id("ips").Op(":=").
 			Qual("github.com/kirinse/go-utils/tools/ip", "GetOutboundIP").Call(),
 		jen.Id("consulReg").Op(":=").Qual("github.com/kirinse/go-utils/grpc/sd/consul", "NewConsulRegister").
-			Call(jen.Id("SVC_NAME"), jen.Id("ips"), jen.Id("port"), jen.Id("[]string{}")),
+			Call(jen.Id("SVC_NAME").Op("+").Lit("_grpc"), jen.Id("ips"), jen.Id("port"), jen.Id("[]string{}")),
 		jen.List(jen.Id("register"), jen.Id("err")).Op("=").
 			Id("consulReg").Dot("NewConsulHTTPRegister").Call(
 			jen.Qual("github.com/go-kit/kit/log", "WithPrefix").Call(
@@ -2403,9 +2441,14 @@ func (g *generateCmd) generateCmdMain() error {
 				"github.com/grpc-ecosystem/grpc-gateway/v2/protoc-gen-openapiv2",
 				"google.golang.org/grpc/cmd/protoc-gen-go-grpc",
 				"google.golang.org/protobuf/cmd/protoc-gen-go",
-				"github.com/mwitkow/go-proto-validators/protoc-gen-govalidators",
+				"github.com/envoyproxy/protoc-gen-validate",
 				"github.com/rakyll/statik",
 			)
+			if g.generateRepository {
+				toolsSrc.Anon(
+					"github.com/kirinse/protoc-gen-gorm",
+				)
+			}
 			if err := g.fs.WriteFile(toolsFilePath, toolsSrc.GoString(), true); err != nil {
 				logrus.Errorf("generate tools.go got err: %v", err)
 			}
